@@ -30,7 +30,7 @@ function LoginModal({ kakaoReady, open, onOpenChange }: LoginModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden border-white/10 bg-[#12141d] p-0 text-zinc-50 shadow-2xl shadow-black/50 sm:max-w-md">
+      <DialogContent className="overflow-x-hidden border-white/10 bg-[#12141d] p-0 text-zinc-50 shadow-2xl shadow-black/50 sm:max-w-md">
         <div className="relative p-6">
           <div className="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_60%)]" />
 

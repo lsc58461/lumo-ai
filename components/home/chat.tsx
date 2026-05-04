@@ -584,20 +584,6 @@ function Chat({
           )}
         </div>
 
-        {showScrollToBottomButton && activeScrollContainer ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-52 z-20 flex justify-center">
-            <Button
-              type="button"
-              size="icon"
-              className="pointer-events-auto size-10 rounded-full border border-white/10 bg-[#12141d]/95 text-zinc-100 shadow-lg shadow-black/30 hover:bg-white/8 md:size-11"
-              onClick={handleScrollToBottom}
-            >
-              <ArrowDown className="size-4" />
-              <span className="sr-only">아래로 스크롤</span>
-            </Button>
-          </div>
-        ) : null}
-
         {isReadOnly ? (
           <Card className="shrink-0 rounded-[28px] border-white/10 bg-white/4 py-0 shadow-2xl shadow-black/10">
             <CardContent className="space-y-4 p-5 text-center">
@@ -616,7 +602,21 @@ function Chat({
             </CardContent>
           </Card>
         ) : (
-          <Card className="shrink-0 rounded-[28px] border border-white/10 bg-white/5 py-0 shadow-lg shadow-black/10 backdrop-blur-xl">
+          <Card className="relative shrink-0 rounded-[28px] border border-white/10 bg-white/5 py-0 shadow-lg shadow-black/10 backdrop-blur-xl">
+            {showScrollToBottomButton && activeScrollContainer ? (
+              <div className="pointer-events-none absolute inset-x-0 -top-18 z-20 flex justify-center">
+                <Button
+                  type="button"
+                  size="icon"
+                  className="pointer-events-auto size-10 rounded-full border border-white/10 bg-[#12141d]/95 text-zinc-100 shadow-lg shadow-black/30 hover:bg-white/8 md:size-11"
+                  onClick={handleScrollToBottom}
+                >
+                  <ArrowDown className="size-4" />
+                  <span className="sr-only">아래로 스크롤</span>
+                </Button>
+              </div>
+            ) : null}
+
             <CardContent className="space-y-2 p-2 md:space-y-3 md:p-3">
               <Textarea
                 aria-label="채팅 질문 입력"
