@@ -24,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -44,9 +45,12 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
   const userAvatar = session?.user?.image ?? "";
   const { isMobile } = useSidebar();
   const [isAccountDialogOpen, setIsAccountDialogOpen] = useState(false);
+  const [isDeleteConfirmDialogOpen, setIsDeleteConfirmDialogOpen] = useState(false);
   const [isDonationDialogOpen, setIsDonationDialogOpen] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState("");
+  const [deleteConsentText, setDeleteConsentText] = useState("");
+  const deleteConsentPhrase = "동의합니다";
 
   const handleSignOut = useCallback(async (): Promise<void> => {
     await signOut({ callbackUrl: "/" });
@@ -73,7 +77,9 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
         throw new Error(data.error ?? "회원 탈퇴 처리에 실패했습니다.");
       }
 
+      setIsDeleteConfirmDialogOpen(false);
       setIsAccountDialogOpen(false);
+      setDeleteConsentText("");
       await signOut({ callbackUrl: "/" });
     } catch (error) {
       setDeleteAccountError(
@@ -264,7 +270,11 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
                     variant="outline"
                     disabled={isDeletingAccount}
                     className="mt-4 w-full rounded-2xl border-red-400/30 bg-transparent text-red-100 hover:bg-red-500/10 hover:text-red-50 sm:w-auto"
-                    onClick={handleDeleteAccount}
+                    onClick={() => {
+                      setDeleteAccountError("");
+                      setDeleteConsentText("");
+                      setIsDeleteConfirmDialogOpen(true);
+                    }}
                   >
                     {isDeletingAccount ? "탈퇴 처리 중" : "회원 탈퇴"}
                   </Button>
@@ -293,6 +303,73 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
                     로그아웃
                   </Button>
                 </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={isDeleteConfirmDialogOpen}
+            onOpenChange={(open) => {
+              setIsDeleteConfirmDialogOpen(open);
+
+              if (!open && !isDeletingAccount) {
+                setDeleteConsentText("");
+              }
+            }}
+          >
+            <DialogContent className="border-red-400/20 bg-[#12141d] text-zinc-100 sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>회원 탈퇴 확인</DialogTitle>
+                <DialogDescription className="text-zinc-400">
+                  탈퇴를 진행하려면 아래 입력칸에 {deleteConsentPhrase} 를 정확히 입력해 주세요.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="rounded-[24px] border border-red-400/20 bg-red-500/10 p-4 text-sm leading-6 text-red-50/90">
+                  이 작업은 되돌릴 수 없으며, 저장된 프로필과 채팅 기록이 함께 삭제됩니다.
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-zinc-200">확인 문구 입력</div>
+                  <Input
+                    aria-label="회원 탈퇴 동의 문구 입력"
+                    className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-500"
+                    value={deleteConsentText}
+                    onChange={(event) => {
+                      setDeleteConsentText(event.target.value);
+                    }}
+                    placeholder={deleteConsentPhrase}
+                  />
+                </div>
+
+                {deleteAccountError ? (
+                  <p className="text-sm leading-6 text-red-100">{deleteAccountError}</p>
+                ) : null}
+              </div>
+
+              <DialogFooter className="gap-2 sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isDeletingAccount}
+                  className="rounded-2xl border-white/10 bg-transparent text-zinc-100 hover:bg-white/8 hover:text-white"
+                  onClick={() => {
+                    setIsDeleteConfirmDialogOpen(false);
+                  }}
+                >
+                  취소
+                </Button>
+                <Button
+                  type="button"
+                  disabled={
+                    isDeletingAccount || deleteConsentText.trim() !== deleteConsentPhrase
+                  }
+                  className="rounded-2xl bg-red-500 text-white hover:bg-red-400 disabled:bg-red-500/40"
+                  onClick={handleDeleteAccount}
+                >
+                  {isDeletingAccount ? "탈퇴 처리 중" : "회원 탈퇴 진행"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
