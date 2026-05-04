@@ -585,7 +585,7 @@ function Chat({
         </div>
 
         {showScrollToBottomButton && activeScrollContainer ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-25.5 z-20 flex justify-center md:bottom-29.5">
+          <div className="pointer-events-none absolute inset-x-0 bottom-52 z-20 flex justify-center">
             <Button
               type="button"
               size="icon"
