@@ -27,6 +27,7 @@ import {
 interface HomeShellProps {
   featuredPrompts: PromptTemplate[];
   initialConversations: ConversationSession[];
+  initialProfiles: string[];
   initialProfile: string;
   initialSharedConversation: ConversationSession | null;
   isSharedView: boolean;
@@ -61,6 +62,7 @@ function createDraftConversation(
 function HomeShell({
   featuredPrompts,
   initialConversations,
+  initialProfiles,
   initialProfile,
   initialSharedConversation,
   isSharedView,
@@ -69,6 +71,8 @@ function HomeShell({
 }: HomeShellProps) {
   const isAuthenticated = Boolean(session?.user);
   const [conversations, setConversations] = useState(initialConversations);
+  const [savedProfiles, setSavedProfiles] = useState(initialProfiles);
+  const [defaultProfileValue, setDefaultProfileValue] = useState(initialProfile);
   const [draftConversation, setDraftConversation] = useState(() =>
     createDraftConversation(featuredPrompts, initialProfile),
   );
@@ -178,12 +182,12 @@ function HomeShell({
   );
 
   const handleNewChat = useCallback((): void => {
-    const nextDraftConversation = createDraftConversation(featuredPrompts, initialProfile);
+    const nextDraftConversation = createDraftConversation(featuredPrompts, defaultProfileValue);
 
     setDraftConversation(nextDraftConversation);
     setActiveConversationId(nextDraftConversation.id);
     setRequestError("");
-  }, [featuredPrompts, initialProfile]);
+  }, [defaultProfileValue, featuredPrompts]);
 
   const handleSelectConversation = useCallback(
     (conversationId: string): void => {
@@ -229,7 +233,7 @@ function HomeShell({
           } else {
             const nextDraftConversation = createDraftConversation(
               featuredPrompts,
-              initialProfile,
+              defaultProfileValue,
             );
 
             setDraftConversation(nextDraftConversation);
@@ -241,7 +245,7 @@ function HomeShell({
       });
       setRequestError("");
     },
-    [activeConversationId, featuredPrompts, initialProfile, isAuthenticated],
+    [activeConversationId, defaultProfileValue, featuredPrompts, isAuthenticated],
   );
 
   const handleSaveProfile = useCallback(
@@ -251,16 +255,44 @@ function HomeShell({
         return;
       }
 
-      await fetch("/api/profile", {
+      const response = await fetch("/api/profile", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ profile }),
       });
+
+      const data = (await response.json()) as {
+        error?: string;
+        activeProfile?: string;
+        profiles?: string[];
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "프로필 저장에 실패했습니다.");
+      }
+
+      const nextActiveProfile = data.activeProfile ?? profile;
+      const nextProfiles = data.profiles ?? [profile];
+
+      setDefaultProfileValue(nextActiveProfile);
+      setSavedProfiles(nextProfiles);
+      setDraftConversation((currentConversation) => ({
+        ...currentConversation,
+        profile: nextActiveProfile,
+      }));
     },
     [isAuthenticated],
   );
+
+  const handleSelectSavedProfile = useCallback((profile: string): void => {
+    setDefaultProfileValue(profile);
+    setDraftConversation((currentConversation) => ({
+      ...currentConversation,
+      profile,
+    }));
+  }, []);
 
   const handleCreateShareLink = useCallback(async (conversationId: string): Promise<string> => {
     const response = await fetch("/api/share", {
@@ -518,6 +550,7 @@ function HomeShell({
               <div className="flex h-full min-h-0 w-full px-3 py-3 md:px-4 md:py-4">
                 <Chat
                   activeConversation={activeConversation}
+                  availableProfiles={savedProfiles}
                   featuredPrompts={featuredPrompts}
                   initialProfile={initialProfile}
                   isAuthenticated={isAuthenticated}
@@ -528,6 +561,7 @@ function HomeShell({
                   onCreateShareLink={handleCreateShareLink}
                   onRequestLogin={handleOpenLoginModal}
                   onSaveProfile={handleSaveProfile}
+                  onSelectSavedProfile={handleSelectSavedProfile}
                   onSubmit={handleSubmit}
                 />
               </div>

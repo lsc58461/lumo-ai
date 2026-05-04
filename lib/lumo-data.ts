@@ -58,7 +58,8 @@ interface SharedConversationDocument extends ConversationSessionDocument {
 
 interface UserProfileDocument {
   userId: string;
-  profile: string;
+  activeProfile?: string;
+  profiles?: string[];
   name?: string | null;
   image?: string | null;
   updatedAt: string | Date;
@@ -122,6 +123,7 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
     featuredPrompts: featuredPromptSeeds,
     conversationPreviews: [],
     conversationSessions: [],
+    initialProfiles: [] as string[],
     initialProfile: defaultChatProfile,
     initialUserName: undefined as string | undefined,
     initialUserImage: undefined as string | undefined,
@@ -179,6 +181,7 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
     const mappedSharedConversation = sharedConversationDocument
       ? mapConversationSession(sharedConversationDocument)
       : null;
+    const initialProfiles = userProfileDocument?.profiles ?? [];
 
     return {
       featuredPrompts:
@@ -193,7 +196,8 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
         mappedSharedConversation || mappedConversationSessions.length === 0
           ? []
           : mappedConversationSessions,
-      initialProfile: userProfileDocument?.profile ?? defaultChatProfile,
+      initialProfiles,
+      initialProfile: userProfileDocument?.activeProfile ?? defaultChatProfile,
       initialUserName:
         (userProfileDocument?.name ?? userDocument?.name ?? undefined) || undefined,
       initialUserImage:

@@ -3,6 +3,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   ChevronDown,
   Compass,
   Copy,
@@ -73,6 +74,7 @@ export interface ChatComposerDraft {
 
 interface ChatProps {
   activeConversation: ConversationSession;
+  availableProfiles: string[];
   featuredPrompts: PromptTemplate[];
   initialProfile: string;
   isAuthenticated: boolean;
@@ -83,11 +85,13 @@ interface ChatProps {
   onCreateShareLink: (conversationId: string) => Promise<string>;
   onRequestLogin: () => void;
   onSaveProfile: (profile: string) => Promise<void>;
+  onSelectSavedProfile: (profile: string) => void;
   onSubmit: (draft: ChatComposerDraft) => Promise<void>;
 }
 
 function Chat({
   activeConversation,
+  availableProfiles,
   featuredPrompts,
   initialProfile,
   isAuthenticated,
@@ -98,6 +102,7 @@ function Chat({
   onCreateShareLink,
   onRequestLogin,
   onSaveProfile,
+  onSelectSavedProfile,
   onSubmit,
 }: ChatProps) {
   const {
@@ -140,7 +145,16 @@ function Chat({
   const activeConversationTools = activeConversation.tools;
   const selectedTone =
     toneOptions.find((toneOption) => toneOption.id === selectedToneId) ?? toneOptions[0];
+  const savedProfileOptions = useMemo(
+    () =>
+      availableProfiles.map((savedProfile) => ({
+        value: savedProfile,
+        summary: summarizeChatProfile(parseChatProfile(savedProfile)),
+      })),
+    [availableProfiles],
+  );
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
+  const [isAddingProfile, setIsAddingProfile] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [isCreatingShareLink, setIsCreatingShareLink] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -320,11 +334,21 @@ function Chat({
 
       setProfile(serializedProfile);
       await onSaveProfile(serializedProfile);
+      setIsAddingProfile(false);
       setIsProfileDialogOpen(false);
     } finally {
       setIsSavingProfile(false);
     }
   }, [onSaveProfile, profileDraft, setProfile]);
+
+  const handleOpenProfileDialog = useCallback(
+    (showAddForm = false): void => {
+      setProfileDraft(parseChatProfile(profile));
+      setIsAddingProfile(showAddForm || savedProfileOptions.length === 0);
+      setIsProfileDialogOpen(true);
+    },
+    [profile, savedProfileOptions.length],
+  );
 
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!hasQuestion || isSending) {
@@ -337,8 +361,7 @@ function Chat({
     }
 
     if (!hasProfile) {
-      setProfileDraft(parseChatProfile(profile));
-      setIsProfileDialogOpen(true);
+      handleOpenProfileDialog(savedProfileOptions.length === 0);
       return;
     }
 
@@ -365,6 +388,8 @@ function Chat({
     selectedToneId,
     selectedTools,
     setQuestion,
+    handleOpenProfileDialog,
+    savedProfileOptions.length,
   ]);
 
   const renderMessageBody = useCallback((message: ConversationSession["messages"][number]) => {
@@ -661,8 +686,7 @@ function Chat({
                     variant="ghost"
                     className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
                     onClick={() => {
-                      setProfileDraft(parseChatProfile(profile));
-                      setIsProfileDialogOpen(true);
+                      handleOpenProfileDialog();
                     }}
                   >
                     <UserRound className="size-4" />
@@ -733,7 +757,16 @@ function Chat({
           </Card>
         )}
 
-        <Dialog open={isProfileDialogOpen} onOpenChange={setIsProfileDialogOpen}>
+        <Dialog
+          open={isProfileDialogOpen}
+          onOpenChange={(open) => {
+            setIsProfileDialogOpen(open);
+
+            if (!open) {
+              setIsAddingProfile(false);
+            }
+          }}
+        >
           <DialogContent className="border-white/10 bg-[#12141d] text-zinc-100 sm:max-w-xl">
             <DialogHeader>
               <DialogTitle>출생 프로필</DialogTitle>
@@ -741,148 +774,219 @@ function Chat({
                 이름, 생년월일, 성별, 음력/양력, 출생시각을 구조화해서 저장합니다.
               </DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2 sm:col-span-2">
-                <div className="text-sm font-medium text-zinc-200">이름</div>
-                <Input
-                  aria-label="이름 입력"
-                  className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-500"
-                  value={profileDraft.name}
-                  onChange={(event) => {
-                    setProfileDraft((current) => ({ ...current, name: event.target.value }));
-                  }}
-                  placeholder="이름을 입력하세요"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-medium text-zinc-200">생년월일</div>
-                <Input
-                  aria-label="생년월일 입력"
-                  type="date"
-                  className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
-                  value={profileDraft.birthDate}
-                  onChange={(event) => {
-                    setProfileDraft((current) => ({
-                      ...current,
-                      birthDate: event.target.value,
-                    }));
-                  }}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-medium text-zinc-200">성별</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["남", "여"] as const).map((gender) => (
-                    <Button
-                      key={gender}
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
-                        profileDraft.gender === gender &&
-                          "border-amber-300/30 bg-amber-300/10 text-amber-100",
-                      )}
-                      onClick={() => {
-                        setProfileDraft((current) => ({ ...current, gender }));
-                      }}
-                    >
-                      {gender}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-medium text-zinc-200">달력</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["양력", "음력"] as const).map((calendarType) => (
-                    <Button
-                      key={calendarType}
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
-                        profileDraft.calendarType === calendarType &&
-                          "border-amber-300/30 bg-amber-300/10 text-amber-100",
-                      )}
-                      onClick={() => {
-                        setProfileDraft((current) => ({ ...current, calendarType }));
-                      }}
-                    >
-                      {calendarType}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2 sm:col-span-2">
-                <div className="text-sm font-medium text-zinc-200">출생시각</div>
-                <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)]">
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
-                        profileDraft.birthTimeKnown &&
-                          "border-amber-300/30 bg-amber-300/10 text-amber-100",
-                      )}
-                      onClick={() => {
-                        setProfileDraft((current) => ({ ...current, birthTimeKnown: true }));
-                      }}
-                    >
-                      입력
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
-                        !profileDraft.birthTimeKnown &&
-                          "border-amber-300/30 bg-amber-300/10 text-amber-100",
-                      )}
-                      onClick={() => {
-                        setProfileDraft((current) => ({ ...current, birthTimeKnown: false }));
-                      }}
-                    >
-                      모름
-                    </Button>
+            {!isAddingProfile && savedProfileOptions.length > 0 ? (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-zinc-200">등록된 프로필 선택</div>
+                  <div className="grid gap-2">
+                    {savedProfileOptions.map((savedProfileOption) => (
+                      <Button
+                        key={savedProfileOption.value}
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "h-auto justify-between rounded-2xl border-white/10 bg-black/20 px-4 py-3 text-left text-zinc-200 hover:bg-white/8 hover:text-white",
+                          profile === savedProfileOption.value &&
+                            "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                        )}
+                        onClick={() => {
+                          setProfile(savedProfileOption.value);
+                          setProfileDraft(parseChatProfile(savedProfileOption.value));
+                          onSelectSavedProfile(savedProfileOption.value);
+                          setIsProfileDialogOpen(false);
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 wrap-break-word">
+                          {savedProfileOption.summary}
+                        </span>
+                        {profile === savedProfileOption.value ? (
+                          <Check className="ml-3 size-4 shrink-0" />
+                        ) : null}
+                      </Button>
+                    ))}
                   </div>
+                </div>
+
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
+                    onClick={() => {
+                      setProfileDraft(defaultChatProfileFields);
+                      setIsAddingProfile(true);
+                    }}
+                  >
+                    새 프로필 추가
+                  </Button>
+                </DialogFooter>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium text-zinc-200">새 프로필 추가</div>
+                    {savedProfileOptions.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-8 rounded-full px-3 text-xs text-zinc-400 hover:bg-white/6 hover:text-white"
+                        onClick={() => {
+                          setIsAddingProfile(false);
+                          setProfileDraft(parseChatProfile(profile));
+                        }}
+                      >
+                        목록으로
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                  <div className="text-sm font-medium text-zinc-200">이름</div>
                   <Input
-                    aria-label="출생시각 입력"
-                    type="time"
-                    disabled={!profileDraft.birthTimeKnown}
-                    className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 disabled:opacity-50"
-                    value={profileDraft.birthTime}
+                    aria-label="이름 입력"
+                    className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-500"
+                    value={profileDraft.name}
+                    onChange={(event) => {
+                      setProfileDraft((current) => ({ ...current, name: event.target.value }));
+                    }}
+                    placeholder="이름을 입력하세요"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-zinc-200">생년월일</div>
+                  <Input
+                    aria-label="생년월일 입력"
+                    type="date"
+                    className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
+                    value={profileDraft.birthDate}
                     onChange={(event) => {
                       setProfileDraft((current) => ({
                         ...current,
-                        birthTime: event.target.value,
+                        birthDate: event.target.value,
                       }));
                     }}
                   />
                 </div>
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-zinc-200">성별</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["남", "여"] as const).map((gender) => (
+                      <Button
+                        key={gender}
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
+                          profileDraft.gender === gender &&
+                            "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                        )}
+                        onClick={() => {
+                          setProfileDraft((current) => ({ ...current, gender }));
+                        }}
+                      >
+                        {gender}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-zinc-200">달력</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["양력", "음력"] as const).map((calendarType) => (
+                      <Button
+                        key={calendarType}
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
+                          profileDraft.calendarType === calendarType &&
+                            "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                        )}
+                        onClick={() => {
+                          setProfileDraft((current) => ({ ...current, calendarType }));
+                        }}
+                      >
+                        {calendarType}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                  <div className="text-sm font-medium text-zinc-200">출생시각</div>
+                  <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)]">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
+                          profileDraft.birthTimeKnown &&
+                            "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                        )}
+                        onClick={() => {
+                          setProfileDraft((current) => ({ ...current, birthTimeKnown: true }));
+                        }}
+                      >
+                        입력
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
+                          !profileDraft.birthTimeKnown &&
+                            "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                        )}
+                        onClick={() => {
+                          setProfileDraft((current) => ({ ...current, birthTimeKnown: false }));
+                        }}
+                      >
+                        모름
+                      </Button>
+                    </div>
+                    <Input
+                      aria-label="출생시각 입력"
+                      type="time"
+                      disabled={!profileDraft.birthTimeKnown}
+                      className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 disabled:opacity-50"
+                      value={profileDraft.birthTime}
+                      onChange={(event) => {
+                        setProfileDraft((current) => ({
+                          ...current,
+                          birthTime: event.target.value,
+                        }));
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-300">
-              <div>프로필 요약: {summarizeChatProfile(profileDraft)}</div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                disabled={
-                  isSavingProfile ||
-                  !isChatProfileComplete(profileDraft) ||
-                  (profileDraft.birthTimeKnown && profileDraft.birthTime.length === 0)
-                }
-                className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
-                onClick={handleSaveProfile}
-              >
-                적용
-              </Button>
-            </DialogFooter>
+            )}
+            {isAddingProfile ? (
+              <>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-300">
+                  <div>프로필 요약: {summarizeChatProfile(profileDraft)}</div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    disabled={
+                      isSavingProfile ||
+                      !isChatProfileComplete(profileDraft) ||
+                      (profileDraft.birthTimeKnown && profileDraft.birthTime.length === 0)
+                    }
+                    className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
+                    onClick={handleSaveProfile}
+                  >
+                    저장하고 선택
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
           </DialogContent>
         </Dialog>
 

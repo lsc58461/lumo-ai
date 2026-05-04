@@ -6,13 +6,7 @@ import { useCallback, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 
 interface LoginModalProps {
@@ -47,14 +41,10 @@ function LoginModal({ kakaoReady, open, onOpenChange }: LoginModalProps) {
             >
               Login Required
             </Badge>
-            <div className="space-y-2">
-              <DialogTitle className="font-display text-3xl tracking-tight text-white">
+            <div className="space-y-1">
+              <DialogTitle className="font-display text-[24px] tracking-tight text-white sm:text-[26px]">
                 로그인 후 루모 AI 채팅을 이어가세요.
               </DialogTitle>
-              <DialogDescription className="text-sm leading-7 text-zinc-400">
-                채팅 전송과 대화 내역 보관은 로그인 사용자에게만 열어 두었습니다. 카카오로 한
-                번만 들어오면 이후 상담 흐름을 그대로 이어서 볼 수 있습니다.
-              </DialogDescription>
             </div>
           </DialogHeader>
 

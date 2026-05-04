@@ -32,7 +32,8 @@ interface StoredAccountProfile {
 
 interface StoredUserProfileDocument {
   userId: string;
-  profile?: string;
+  activeProfile?: string;
+  profiles?: string[];
   name?: string | null;
   image?: string | null;
   updatedAt?: string;
@@ -122,7 +123,8 @@ async function syncUserProfileDocument(
         updatedAt: new Date().toISOString(),
       },
       $setOnInsert: {
-        profile: "",
+        activeProfile: "",
+        profiles: [],
       },
     },
     { upsert: true },

@@ -59,7 +59,8 @@ interface ConversationSessionDocument {
 
 interface UserProfileDocument {
   userId: string;
-  profile: string;
+  activeProfile: string;
+  profiles: string[];
   name?: string | null;
   image?: string | null;
   updatedAt: string;
@@ -309,10 +310,13 @@ async function persistConversation(
       {
         $set: {
           userId,
-          profile: body.profile,
+          activeProfile: body.profile,
           name: userName,
           image: userImage,
           updatedAt: new Date().toISOString(),
+        },
+        $addToSet: {
+          profiles: body.profile,
         },
       },
       { upsert: true },

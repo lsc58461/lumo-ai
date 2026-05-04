@@ -6,7 +6,8 @@ import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
 
 interface UserProfileDocument {
   userId: string;
-  profile: string;
+  activeProfile: string;
+  profiles: string[];
   name?: string | null;
   image?: string | null;
   updatedAt: string;
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
   }
 
   if (!isMongoConfigured()) {
-    return NextResponse.json({ saved: false, profile });
+    return NextResponse.json({ saved: false, activeProfile: profile, profiles: [profile] });
   }
 
   try {
@@ -47,17 +48,28 @@ export async function POST(request: Request) {
       {
         $set: {
           userId,
-          profile,
+          activeProfile: profile,
           name: userName,
           image: userImage,
           updatedAt: new Date().toISOString(),
+        },
+        $addToSet: {
+          profiles: profile,
         },
       },
       { upsert: true },
     );
 
-    return NextResponse.json({ saved: true, profile });
+    const nextUserProfile = await database
+      .collection<UserProfileDocument>("userProfiles")
+      .findOne({ userId });
+
+    return NextResponse.json({
+      saved: true,
+      activeProfile: nextUserProfile?.activeProfile ?? profile,
+      profiles: nextUserProfile?.profiles ?? [profile],
+    });
   } catch {
-    return NextResponse.json({ saved: false, profile });
+    return NextResponse.json({ saved: false, activeProfile: profile, profiles: [profile] });
   }
 }
