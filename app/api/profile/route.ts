@@ -112,3 +112,70 @@ export async function POST(request: Request) {
     });
   }
 }
+
+export async function DELETE(request: Request) {
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    return NextResponse.json(
+      { error: "로그인 후에만 프로필을 삭제할 수 있습니다." },
+      { status: 401 },
+    );
+  }
+
+  const body = (await request.json()) as {
+    profile?: string;
+  };
+  const profile = body.profile?.trim();
+
+  if (!profile) {
+    return NextResponse.json({ error: "삭제할 프로필이 비어 있습니다." }, { status: 400 });
+  }
+
+  if (!isMongoConfigured()) {
+    return NextResponse.json({
+      deleted: false,
+      activeProfile: "",
+      activeProfiles: [],
+      profiles: [],
+    });
+  }
+
+  try {
+    const database = await getMongoDatabase();
+    const currentUserProfile = await database
+      .collection<UserProfileDocument>("userProfiles")
+      .findOne({ userId });
+    const nextProfiles = (currentUserProfile?.profiles ?? []).filter(
+      (savedProfile) => savedProfile !== profile,
+    );
+    const nextActiveProfiles = normalizeProfileSelection(
+      (currentUserProfile?.activeProfiles ?? []).filter(
+        (savedProfile) => savedProfile !== profile,
+      ),
+    );
+    const nextPrimaryProfile = nextActiveProfiles[0] ?? nextProfiles[0] ?? "";
+
+    await database.collection<UserProfileDocument>("userProfiles").updateOne(
+      { userId },
+      {
+        $set: {
+          activeProfile: nextPrimaryProfile,
+          activeProfiles: nextActiveProfiles,
+          profiles: nextProfiles,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    );
+
+    return NextResponse.json({
+      deleted: true,
+      activeProfile: nextPrimaryProfile,
+      activeProfiles: nextActiveProfiles,
+      profiles: nextProfiles,
+    });
+  } catch {
+    return NextResponse.json({ error: "프로필 삭제에 실패했습니다." }, { status: 500 });
+  }
+}

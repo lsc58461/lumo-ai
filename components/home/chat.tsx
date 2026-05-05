@@ -1,10 +1,14 @@
 "use client";
 
+import { format, parseISO } from "date-fns";
+import { ko } from "date-fns/locale";
 import {
   ArrowDown,
   ArrowUp,
+  CalendarIcon,
   Check,
   ChevronDown,
+  Clock3,
   Compass,
   Copy,
   Link2,
@@ -14,6 +18,7 @@ import {
   Pencil,
   Share2,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -23,6 +28,7 @@ import { useShallow } from "zustand/react/shallow";
 import ToolRunResults from "@/components/home/tool-run-results";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -43,6 +49,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -74,12 +81,6 @@ const profileDropdownTriggerClassName =
   "h-12 w-full justify-between rounded-2xl border-white/10 bg-black/20 px-4 text-zinc-100 hover:bg-white/8 hover:text-white";
 const selectedProfileButtonClassName =
   "border-cyan-300/45 bg-cyan-400/12 text-zinc-50 font-semibold shadow-[0_0_0_1px_rgba(103,232,249,0.18)]";
-const birthTimeOptions = Array.from({ length: 48 }, (_, index) => {
-  const hour = String(Math.floor(index / 2)).padStart(2, "0");
-  const minute = index % 2 === 0 ? "00" : "30";
-
-  return `${hour}:${minute}`;
-});
 
 interface ProfileDropdownFieldProps {
   label: string;
@@ -155,6 +156,92 @@ function ProfileDropdownField({
   );
 }
 
+interface ProfileDatePickerFieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function ProfileDatePickerField({ label, value, onChange }: ProfileDatePickerFieldProps) {
+  const selectedDate = value ? parseISO(value) : undefined;
+
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium text-zinc-200">{label}</div>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(
+              profileDropdownTriggerClassName,
+              "justify-start text-left font-normal",
+              !selectedDate && "text-zinc-500",
+            )}
+          >
+            <CalendarIcon className="size-4 shrink-0" />
+            <span className="truncate">
+              {selectedDate
+                ? format(selectedDate, "yyyy년 M월 d일", { locale: ko })
+                : "생년월일을 선택하세요"}
+            </span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-auto border-white/10 bg-[#12141d] p-0 text-zinc-100"
+        >
+          <Calendar
+            mode="single"
+            selected={selectedDate}
+            onSelect={(date) => {
+              onChange(date ? format(date, "yyyy-MM-dd") : "");
+            }}
+            locale={ko}
+            captionLayout="dropdown"
+            fromYear={1930}
+            toYear={new Date().getFullYear()}
+            defaultMonth={selectedDate}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+interface ProfileTimeInputFieldProps {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+function ProfileTimeInputField({
+  value,
+  disabled = false,
+  onChange,
+}: ProfileTimeInputFieldProps) {
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium text-zinc-200">출생시각</div>
+      <div className="relative">
+        <Clock3 className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-zinc-500" />
+        <Input
+          aria-label="출생시각 입력"
+          type="time"
+          step={60}
+          disabled={disabled}
+          className="h-12 rounded-2xl border-white/10 bg-black/20 pl-11 text-zinc-100 scheme-dark disabled:cursor-not-allowed disabled:opacity-50"
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
+        />
+      </div>
+      <div className="text-xs text-zinc-500">1분 단위로 직접 입력할 수 있습니다.</div>
+    </div>
+  );
+}
+
 export interface ChatComposerDraft {
   profile: string;
   question: string;
@@ -173,6 +260,7 @@ interface ChatProps {
   isSending: boolean;
   requestError: string;
   onCreateShareLink: (conversationId: string) => Promise<string>;
+  onDeleteProfile: (profile: string) => Promise<string>;
   onRequestLogin: () => void;
   onSaveProfile: (
     profile: string,
@@ -195,6 +283,7 @@ function Chat({
   isSending,
   requestError,
   onCreateShareLink,
+  onDeleteProfile,
   onRequestLogin,
   onSaveProfile,
   onSelectSavedProfile,
@@ -260,14 +349,6 @@ function Chat({
     ],
     [],
   );
-  const birthTimeDropdownOptions = useMemo(
-    () =>
-      birthTimeOptions.map((time) => ({
-        value: time,
-        label: time,
-      })),
-    [],
-  );
   const savedProfileOptions = useMemo(
     () =>
       availableProfiles.map((savedProfile) => ({
@@ -278,8 +359,12 @@ function Chat({
   );
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   const [isAddingProfile, setIsAddingProfile] = useState(false);
+  const [pendingDeleteProfileValue, setPendingDeleteProfileValue] = useState<string | null>(
+    null,
+  );
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [isCreatingShareLink, setIsCreatingShareLink] = useState(false);
+  const [isDeletingProfile, setIsDeletingProfile] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileDraft, setProfileDraft] = useState<ChatProfileFields>(defaultChatProfileFields);
   const [editingProfileValue, setEditingProfileValue] = useState<string | null>(null);
@@ -508,6 +593,28 @@ function Chat({
     setIsAddingProfile(true);
   }, []);
 
+  const handleDeleteSavedProfile = useCallback(
+    async (savedProfile: string): Promise<void> => {
+      setIsDeletingProfile(true);
+
+      try {
+        const nextSelectionValue = await onDeleteProfile(savedProfile);
+
+        setProfile(nextSelectionValue);
+
+        if (editingProfileValue === savedProfile) {
+          setEditingProfileValue(null);
+          setProfileDraft(defaultChatProfileFields);
+          setIsAddingProfile(false);
+        }
+      } finally {
+        setIsDeletingProfile(false);
+        setPendingDeleteProfileValue(null);
+      }
+    },
+    [editingProfileValue, onDeleteProfile, setProfile],
+  );
+
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!hasQuestion || isSending) {
       return;
@@ -572,7 +679,7 @@ function Chat({
                 <p className="mt-1 text-sm font-medium text-cyan-50">도구 분석중</p>
               </div>
               <div className="hidden h-px bg-cyan-300/18 md:block" />
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-zinc-400">
+              <div className="rounded-2xl border border-white/10 bg-white/3 px-3 py-2.5 text-zinc-400">
                 <div className="text-[10px] tracking-[0.18em] text-zinc-500 uppercase">
                   Step 2
                 </div>
@@ -916,7 +1023,7 @@ function Chat({
                     }}
                   >
                     <UserRound className="size-4" />
-                    프로필
+                    프로필 + {selectedProfileValues.length}
                   </Button>
 
                   <DropdownMenu>
@@ -993,9 +1100,12 @@ function Chat({
                     <div className="text-sm font-medium text-zinc-200">등록된 프로필 선택</div>
                     <div className="text-xs text-zinc-500">최대 2개까지 선택</div>
                   </div>
-                  <div className="grid gap-2">
+                  <div className="grid gap-1.5">
                     {savedProfileOptions.map((savedProfileOption) => (
-                      <div key={savedProfileOption.value} className="flex items-stretch gap-2">
+                      <div
+                        key={savedProfileOption.value}
+                        className="flex min-w-0 items-stretch gap-1.5"
+                      >
                         <Button
                           type="button"
                           variant="outline"
@@ -1004,7 +1114,7 @@ function Chat({
                             selectedProfileValues.length >= 2
                           }
                           className={cn(
-                            "h-auto flex-1 justify-between rounded-2xl border-white/10 bg-black/20 px-4 py-3 text-left text-zinc-100 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50",
+                            "h-auto min-h-11 min-w-0 flex-1 justify-between rounded-[18px] border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-zinc-100 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50",
                             selectedProfileValues.includes(savedProfileOption.value) &&
                               "border-cyan-300/40 bg-cyan-400/10 text-zinc-50 shadow-[0_0_0_1px_rgba(103,232,249,0.15)]",
                           )}
@@ -1012,23 +1122,37 @@ function Chat({
                             handleToggleSavedProfile(savedProfileOption.value);
                           }}
                         >
-                          <span className="min-w-0 flex-1 wrap-break-word">
+                          <span className="block min-w-0 flex-1 truncate leading-5">
                             {savedProfileOption.summary}
                           </span>
                           {selectedProfileValues.includes(savedProfileOption.value) ? (
-                            <Check className="ml-3 size-4 shrink-0 text-cyan-100" />
+                            <Check className="ml-2 size-4 shrink-0 text-cyan-100" />
                           ) : null}
                         </Button>
                         <Button
                           type="button"
                           variant="outline"
-                          className="h-auto rounded-2xl border-white/10 bg-black/20 px-3 text-zinc-300 hover:bg-white/8 hover:text-white"
+                          className="h-auto shrink-0 rounded-[18px] border-white/10 bg-black/20 px-2.5 text-xs text-zinc-300 hover:bg-white/8 hover:text-white"
+                          aria-label="프로필 수정"
                           onClick={() => {
                             handleEditSavedProfile(savedProfileOption.value);
                           }}
                         >
                           <Pencil className="size-4" />
-                          수정
+                          <span className="hidden sm:inline">수정</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={isDeletingProfile}
+                          className="h-auto shrink-0 rounded-[18px] border-white/10 bg-black/20 px-2.5 text-xs text-zinc-300 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="프로필 삭제"
+                          onClick={() => {
+                            setPendingDeleteProfileValue(savedProfileOption.value);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                          <span className="hidden sm:inline">삭제</span>
                         </Button>
                       </div>
                     ))}
@@ -1101,21 +1225,16 @@ function Chat({
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <div className="text-sm font-medium text-zinc-200">생년월일</div>
-                  <Input
-                    aria-label="생년월일 입력"
-                    type="date"
-                    className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100"
-                    value={profileDraft.birthDate}
-                    onChange={(event) => {
-                      setProfileDraft((current) => ({
-                        ...current,
-                        birthDate: event.target.value,
-                      }));
-                    }}
-                  />
-                </div>
+                <ProfileDatePickerField
+                  label="생년월일"
+                  value={profileDraft.birthDate}
+                  onChange={(value) => {
+                    setProfileDraft((current) => ({
+                      ...current,
+                      birthDate: value,
+                    }));
+                  }}
+                />
 
                 <div className="space-y-2">
                   <div className="text-sm font-medium text-zinc-200">성별</div>
@@ -1170,19 +1289,15 @@ function Chat({
                         }));
                       }}
                     />
-                    <ProfileDropdownField
-                      label="출생시각"
-                      placeholder="시간을 선택하세요"
-                      value={profileDraft.birthTime}
-                      options={birthTimeDropdownOptions}
+                    <ProfileTimeInputField
                       disabled={!profileDraft.birthTimeKnown}
-                      contentClassName="max-h-80 overflow-y-auto"
                       onChange={(value) => {
                         setProfileDraft((current) => ({
                           ...current,
                           birthTime: value,
                         }));
                       }}
+                      value={profileDraft.birthTime}
                     />
                   </div>
                 </div>
@@ -1209,6 +1324,51 @@ function Chat({
                 </DialogFooter>
               </>
             ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(pendingDeleteProfileValue)}
+          onOpenChange={(open) => {
+            if (!open && !isDeletingProfile) {
+              setPendingDeleteProfileValue(null);
+            }
+          }}
+        >
+          <DialogContent className="border-white/10 bg-[#11131a] text-zinc-100 sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>프로필 삭제</DialogTitle>
+              <DialogDescription className="text-zinc-400">
+                선택한 출생 프로필을 삭제합니다. 이 작업은 되돌릴 수 없습니다.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white"
+                disabled={isDeletingProfile}
+                onClick={() => {
+                  setPendingDeleteProfileValue(null);
+                }}
+              >
+                취소
+              </Button>
+              <Button
+                type="button"
+                className="rounded-2xl bg-red-500/90 text-white hover:bg-red-500"
+                disabled={!pendingDeleteProfileValue || isDeletingProfile}
+                onClick={() => {
+                  if (!pendingDeleteProfileValue) {
+                    return;
+                  }
+
+                  handleDeleteSavedProfile(pendingDeleteProfileValue).catch(() => undefined);
+                }}
+              >
+                삭제
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 

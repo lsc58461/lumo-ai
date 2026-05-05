@@ -356,6 +356,51 @@ function HomeShell({
     [isAuthenticated],
   );
 
+  const handleDeleteProfile = useCallback(
+    async (profile: string): Promise<string> => {
+      if (!isAuthenticated) {
+        setIsLoginModalOpen(true);
+        return "";
+      }
+
+      const response = await fetch("/api/profile", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ profile }),
+      });
+
+      const data = (await response.json()) as {
+        error?: string;
+        activeProfile?: string;
+        activeProfiles?: string[];
+        profiles?: string[];
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "프로필 삭제에 실패했습니다.");
+      }
+
+      const nextProfiles = data.profiles ?? [];
+      const nextSelectedProfiles = data.activeProfiles ?? [];
+      const nextSelectionValue =
+        nextSelectedProfiles.length > 0
+          ? serializeProfileSelection(nextSelectedProfiles)
+          : (data.activeProfile ?? "");
+
+      setSavedProfiles(nextProfiles);
+      setDefaultProfileValue(nextSelectionValue);
+      setDraftConversation((currentConversation) => ({
+        ...currentConversation,
+        profile: nextSelectionValue,
+      }));
+
+      return nextSelectionValue;
+    },
+    [isAuthenticated],
+  );
+
   const handleSelectSavedProfiles = useCallback(
     (profiles: string[]): void => {
       const nextSelectionValue = serializeProfileSelection(profiles);
@@ -714,6 +759,7 @@ function HomeShell({
                   isSending={isSending}
                   requestError={requestError}
                   onCreateShareLink={handleCreateShareLink}
+                  onDeleteProfile={handleDeleteProfile}
                   onRequestLogin={handleOpenLoginModal}
                   onSaveProfile={handleSaveProfile}
                   onSelectSavedProfile={handleSelectSavedProfiles}

@@ -1,6 +1,6 @@
 import { Bazi } from "bazi.js";
 import { Horoscope, Origin } from "circular-natal-horoscope-js";
-import { Lunar } from "lunar-javascript";
+import { Lunar, Solar } from "lunar-javascript";
 
 import {
   toolCatalog,
@@ -263,7 +263,7 @@ function createSajuSummary(profile: ParsedBirthProfile, bazi: Bazi): string {
     profile.birthTimeKnown
       ? `${siZhu.day.gan}${siZhu.day.zhi} 일주를 중심으로 ${strengthAnalysis.isStrong ? "신강" : "신약"} 판정이며, 월간 ${shiShenConfig.monthGan.gan}의 ${monthRole}와 시간 ${shiShenConfig.hourGan.gan}의 ${hourRole} 성향이 함께 두드러집니다.`
       : `${siZhu.day.gan}${siZhu.day.zhi} 일주를 중심으로 ${strengthAnalysis.isStrong ? "신강" : "신약"} 판정이며, 월간 ${shiShenConfig.monthGan.gan}의 ${monthRole} 흐름이 중심축으로 읽힙니다.`,
-    `희용신은 ${favoredElements || "판단 보류"}, 기신은 ${cautionElements || "판단 보류"} 쪽으로 읽히고 오행 분포는 ${formatWuXingStrength(strengthAnalysis.wuXingStrength)}입니다.`,
+    `희용신은 ${favoredElements || "판단 보류"}, 기신은 ${cautionElements || "판단 보류"} 쪽으로 읽히며, 오행 세기는 눈에 보이는 글자 수가 아니라 월령과 지장간 가중치를 함께 반영한 기준으로 ${formatWuXingStrength(strengthAnalysis.wuXingStrength)}입니다.`,
     starSentence
       ? `${starSentence} 현재 질문은 타고난 강점을 밀어붙이기보다 균형을 맞추는 쪽에서 해석하는 편이 정확합니다.`
       : `${profile.birthTimeKnown ? "시주까지 반영된" : "시주를 제외한"} 원국 기준으로 균형과 편중을 함께 보는 해석이 유효합니다.`,
@@ -392,15 +392,19 @@ function buildSajuResult(profile: ParsedBirthProfile, _question: string): ToolEx
       heavenly: visibleHeavenly,
       earthly: visibleEarthly,
       note: [
-        `신강신약: ${strengthAnalysis.isStrong ? "신강" : "신약"}`,
-        `희용신: ${yongShenAnalysis.xiYongShen.map((item) => wuXingLabels[item]).join(", ")}`,
-        profile.calendarType === "음력"
-          ? "음력 입력을 양력으로 환산해 계산했습니다."
-          : "양력 기준으로 계산했습니다.",
-        profile.birthTimeKnown
-          ? "출생시각을 반영했습니다."
-          : "출생시각이 없어 시주는 표기하지 않았습니다.",
-      ].join(" · "),
+        [
+          `신강신약: ${strengthAnalysis.isStrong ? "신강" : "신약"}`,
+          `희용신: ${yongShenAnalysis.xiYongShen.map((item) => wuXingLabels[item]).join(", ")}`,
+        ].join(" · "),
+        [
+          profile.calendarType === "음력"
+            ? "음력 입력을 양력으로 환산해 계산했습니다."
+            : "양력 기준으로 계산했습니다.",
+          profile.birthTimeKnown
+            ? "출생시각을 반영했습니다."
+            : "출생시각이 없어 시주는 표기하지 않았습니다.",
+        ].join(" · "),
+      ].join("\n"),
     },
   };
 }
@@ -601,8 +605,66 @@ function buildTarotResult(profile: ParsedBirthProfile, question: string): ToolEx
   };
 }
 
-function buildSukyoResult(profile: ParsedBirthProfile, question: string): ToolExecutionResult {
-  const seed = hashString(`${profile.raw}:${question}:sukyo`);
+function toLunarBirthDate(profile: ParsedBirthProfile) {
+  if (profile.calendarType === "음력") {
+    return Lunar.fromYmdHms(
+      profile.year,
+      profile.month,
+      profile.day,
+      profile.hour,
+      profile.minute,
+      0,
+    );
+  }
+
+  return Solar.fromYmdHms(
+    profile.year,
+    profile.month,
+    profile.day,
+    profile.hour,
+    profile.minute,
+    0,
+  ).getLunar();
+}
+
+function getSukyoFlowSentence(xiuLuck: string): string {
+  if (xiuLuck.includes("吉")) {
+    return "사람과의 호흡을 너무 재기보다 자연스럽게 이어갈수록 장점이 살아납니다.";
+  }
+
+  if (xiuLuck.includes("凶")) {
+    return "관계에서는 서두를수록 엇갈리기 쉬워서 속도 조절과 거리감 관리가 더 중요합니다.";
+  }
+
+  return "좋고 나쁨이 극단적으로 갈리기보다 타이밍과 말투에 따라 체감 차이가 큰 편입니다.";
+}
+
+function buildSukyoSummary(xiu: string, xiuLuck: string, gong: string, animal: string): string {
+  const flowSentence = getSukyoFlowSentence(xiuLuck);
+
+  return `${xiu}수 기준 ${gong}궁 흐름이 잡히고 상징 동물은 ${animal}이라 관계 해석은 분위기와 간격 조절을 중심으로 보는 편이 맞습니다. ${flowSentence}`;
+}
+
+function getSukyoLuckDescription(xiuLuck: string): string {
+  if (xiuLuck.includes("吉")) {
+    return "관계 흐름이 붙는 편";
+  }
+
+  if (xiuLuck.includes("凶")) {
+    return "속도 조절이 중요한 편";
+  }
+
+  return "타이밍 영향이 큰 편";
+}
+
+function buildSukyoResult(profile: ParsedBirthProfile, _question: string): ToolExecutionResult {
+  const lunarBirth = toLunarBirthDate(profile);
+  const xiu = lunarBirth.getXiu();
+  const xiuLuck = lunarBirth.getXiuLuck();
+  const zheng = lunarBirth.getZheng();
+  const animal = lunarBirth.getAnimal();
+  const gong = lunarBirth.getGong();
+  const xiuSong = lunarBirth.getXiuSong();
 
   return {
     id: createExecutionId("sukyo"),
@@ -610,25 +672,33 @@ function buildSukyoResult(profile: ParsedBirthProfile, question: string): ToolEx
     label: toolCatalog.sukyo.label,
     status: "success",
     args: formatBirthArgs(profile),
-    summary: "관계 운에서는 속도보다 리듬과 간격 조절이 더 중요하게 잡히는 패턴입니다.",
+    summary: buildSukyoSummary(xiu, xiuLuck, gong, animal),
     variant: "sukyo",
     badges: [
       {
-        label: "관계 리듬",
-        value: seed % 2 === 0 ? "가까울수록 안정" : "거리감이 필요",
+        label: "본명숙",
+        value: `${xiu}수`,
+        subvalue: `${zheng}${animal}`,
         tone: "violet",
       },
       {
-        label: "충돌 포인트",
-        value: seed % 3 === 0 ? "답장 속도" : "감정 온도차",
+        label: "길흉",
+        value: xiuLuck,
+        subvalue: getSukyoLuckDescription(xiuLuck),
         tone: "rose",
       },
       {
-        label: "잘 맞는 방식",
-        value: seed % 5 === 0 ? "생활 루틴 공유" : "명확한 역할 분담",
+        label: "궁",
+        value: gong,
+        subvalue: "관계 해석의 중심 궁",
         tone: "emerald",
       },
-      { label: "한 줄 결론", value: "감정보다 호흡을 맞추면 오래 갑니다", tone: "amber" },
+      {
+        label: "숙요 해석",
+        value: xiuSong.slice(0, 16),
+        subvalue: xiuSong.length > 16 ? `${xiuSong.slice(0, 26)}...` : xiuSong,
+        tone: "amber",
+      },
     ],
   };
 }

@@ -115,7 +115,7 @@ function SajuPreview({
         </tbody>
       </table>
 
-      <div className="mt-2 inline-flex items-center gap-1 text-[10px] text-zinc-400 md:mt-2.5 md:text-[11px]">
+      <div className="mt-2 inline-flex max-w-full items-start gap-1 text-[10px] whitespace-pre-line text-zinc-400 md:mt-2.5 md:text-[11px]">
         <CircleHelp className="size-3.5" />
         {result.pillars.note}
       </div>

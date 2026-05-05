@@ -22,7 +22,7 @@ export const toolCatalog = {
   sukyo: {
     label: "숙요",
     blurb: "궁합이 잘 맞아요",
-    beta: true,
+    beta: false,
   },
   mahabote: {
     label: "마하보테",
