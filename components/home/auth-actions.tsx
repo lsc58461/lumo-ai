@@ -169,7 +169,7 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
               </DialogHeader>
 
               <div className="space-y-4">
-                <div className="rounded-[24px] border border-amber-300/15 bg-amber-300/10 p-4 text-sm leading-6 text-amber-50">
+                <div className="rounded-[24px] border border-cyan-300/15 bg-cyan-300/10 p-4 text-sm leading-6 text-cyan-50">
                   마음에 들었다면 작은 후원으로 응원해 주세요. 후원은 새로운 기능 개선과
                   안정화에 바로 사용되고, 서버 유지에도 큰 도움이 됩니다.
                 </div>

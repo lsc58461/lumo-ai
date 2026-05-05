@@ -14,6 +14,9 @@
   "dependencies": {
     "@auth/mongodb-adapter": "^3.11.2",
     "@google/genai": "^1.51.0",
+    "astronomy-engine": "^2.1.19",
+    "bazi.js": "^1.1.0",
+    "circular-natal-horoscope-js": "^1.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.14.0",

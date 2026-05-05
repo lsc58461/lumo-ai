@@ -13,6 +13,7 @@ interface ChatMessageDocument {
   content: string;
   createdAt?: string;
   toolResults?: ChatMessage["toolResults"];
+  followUpSuggestions?: ChatMessage["followUpSuggestions"];
 }
 
 interface ConversationSessionDocument {

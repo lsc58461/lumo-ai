@@ -37,7 +37,7 @@ function LoginModal({ kakaoReady, open, onOpenChange }: LoginModalProps) {
           <DialogHeader className="relative space-y-4 text-left">
             <Badge
               variant="outline"
-              className="w-fit border-amber-300/20 bg-amber-300/10 px-3 py-1 text-[11px] tracking-[0.24em] text-amber-100 uppercase"
+              className="w-fit border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[11px] tracking-[0.24em] text-cyan-100 uppercase"
             >
               Login Required
             </Badge>
@@ -66,7 +66,7 @@ function LoginModal({ kakaoReady, open, onOpenChange }: LoginModalProps) {
             <div className="rounded-3xl border border-white/10 bg-white/4 p-4">
               <div className="flex items-start gap-3">
                 <div className="rounded-2xl border border-white/10 bg-white/6 p-2.5">
-                  <Sparkles className="size-4 text-amber-100" />
+                  <Sparkles className="size-4 text-cyan-100" />
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-sm font-medium text-zinc-100">프로필과 톤 유지</div>
@@ -85,7 +85,7 @@ function LoginModal({ kakaoReady, open, onOpenChange }: LoginModalProps) {
               type="button"
               size="lg"
               disabled={!kakaoReady || isSigningIn}
-              className="h-12 rounded-2xl bg-[#FEE500] text-[#191600] hover:bg-[#f5dd00]"
+              className="h-12 rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-cyan-100"
               onClick={handleSignIn}
             >
               {isSigningIn ? (

@@ -11,6 +11,7 @@ import {
   type PromptTemplate,
 } from "@/lib/lumo-content";
 import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
+import { serializeProfileSelection } from "@/lib/profile";
 
 interface PromptTemplateDocument {
   slug: string;
@@ -31,6 +32,7 @@ interface ChatMessageDocument {
   content: string;
   createdAt?: string;
   toolResults?: ChatMessage["toolResults"];
+  followUpSuggestions?: ChatMessage["followUpSuggestions"];
 }
 
 interface ConversationSessionDocument {
@@ -59,6 +61,7 @@ interface SharedConversationDocument extends ConversationSessionDocument {
 interface UserProfileDocument {
   userId: string;
   activeProfile?: string;
+  activeProfiles?: string[];
   profiles?: string[];
   name?: string | null;
   image?: string | null;
@@ -109,6 +112,7 @@ function mapConversationSession(document: ConversationSessionDocument): Conversa
       role: message.role,
       content: message.content,
       toolResults: message.toolResults,
+      followUpSuggestions: message.followUpSuggestions,
       createdAt:
         message.createdAt ??
         (typeof document.updatedAt === "string"
@@ -197,7 +201,10 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
           ? []
           : mappedConversationSessions,
       initialProfiles,
-      initialProfile: userProfileDocument?.activeProfile ?? defaultChatProfile,
+      initialProfile:
+        serializeProfileSelection(userProfileDocument?.activeProfiles ?? []) ||
+        userProfileDocument?.activeProfile ||
+        defaultChatProfile,
       initialUserName:
         (userProfileDocument?.name ?? userDocument?.name ?? undefined) || undefined,
       initialUserImage:

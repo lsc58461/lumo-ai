@@ -2,34 +2,42 @@ export const toolCatalog = {
   saju: {
     label: "사주",
     blurb: "운의 흐름을 잘 봐요",
+    beta: false,
   },
   astrology: {
     label: "점성술",
     blurb: "인생 테마를 한눈에",
+    beta: false,
   },
   ziwei: {
     label: "자미두수",
     blurb: "디테일의 끝판왕",
+    beta: true,
   },
   tarot: {
     label: "타로",
     blurb: "연애나 심리에 강해요",
+    beta: true,
   },
   sukyo: {
     label: "숙요",
     blurb: "궁합이 잘 맞아요",
+    beta: true,
   },
   mahabote: {
     label: "마하보테",
     blurb: "미얀마의 숨겨진 비기",
+    beta: true,
   },
   vedic: {
     label: "베딕",
     blurb: "가장 뛰어난 적중률",
+    beta: true,
   },
   compatibility: {
     label: "궁합",
     blurb: "이전 궁합 도구 호환용",
+    beta: true,
     hidden: true,
   },
 } as const;
@@ -154,6 +162,7 @@ export interface ChatMessage {
   createdAt: string;
   pending?: boolean;
   toolResults?: ToolExecutionResult[];
+  followUpSuggestions?: string[];
 }
 
 export interface ConversationPreview {
@@ -171,28 +180,50 @@ export interface ConversationSession extends ConversationPreview {
   messages: ChatMessage[];
 }
 
-export type ToneId = "clear" | "warm" | "direct";
+export type ToneId = "clear" | "warm" | "direct" | "deep" | "gentle" | "strategic";
 export type PromptAccent = "gold" | "teal" | "rose";
 
 export const toneOptions: {
   id: ToneId;
   label: string;
   summary: string;
+  guide: string;
 }[] = [
   {
     id: "clear",
     label: "맑고 단정하게",
     summary: "감정 과잉 없이 핵심부터 정리합니다.",
+    guide: "군더더기 없이 핵심, 근거, 결론 순서로 또렷하게 말합니다.",
   },
   {
     id: "warm",
     label: "다정하지만 정확하게",
     summary: "위로보다 해석을 먼저 주고, 말투는 부드럽게 갑니다.",
+    guide: "부드럽고 배려 있는 문장으로 말하되, 해석의 선명함은 유지합니다.",
   },
   {
     id: "direct",
     label: "현실 감각 있게",
     summary: "오늘 당장 할 행동까지 끌어내는 톤입니다.",
+    guide: "우회하지 말고 현실 판단과 실행 포인트를 분명히 짚습니다.",
+  },
+  {
+    id: "deep",
+    label: "차분하고 깊게",
+    summary: "겉흐름보다 패턴의 뿌리와 장기 흐름을 더 깊게 봅니다.",
+    guide: "서두르지 않고 패턴의 원인과 장기 흐름을 천천히 풀어 설명합니다.",
+  },
+  {
+    id: "gentle",
+    label: "부담 없이 다정하게",
+    summary: "압박감 없이 이해하기 쉽게 풀어주는 톤입니다.",
+    guide: "단정적인 표현을 더 줄이고, 상대가 받아들이기 쉽게 완곡하게 설명합니다.",
+  },
+  {
+    id: "strategic",
+    label: "전략적으로 냉정하게",
+    summary: "관계와 선택을 손익과 우선순위 기준으로 정리합니다.",
+    guide: "감정보다 우선순위, 리스크, 타이밍을 기준으로 전략적으로 설명합니다.",
   },
 ];
 

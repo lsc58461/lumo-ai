@@ -32,7 +32,7 @@ function getDraftState(prompts: PromptTemplate[], initialProfile?: string) {
     profile: initialProfile ?? defaultChatProfile,
     selectedToneId: firstPrompt?.tone ?? "clear",
     selectedTools: firstPrompt?.tools ?? ["saju", "astrology"],
-    question: firstPrompt?.prompt ?? defaultChatQuestion,
+    question: defaultChatQuestion,
   };
 }
 

@@ -1,3 +1,7 @@
+import { Bazi } from "bazi.js";
+import { Horoscope, Origin } from "circular-natal-horoscope-js";
+import { Lunar } from "lunar-javascript";
+
 import {
   toolCatalog,
   type ToolExecutionResult,
@@ -7,7 +11,7 @@ import {
   type ToolTarotCard,
   type ToolZiweiPalace,
 } from "@/lib/lumo-content";
-import { parseChatProfile } from "@/lib/profile";
+import { normalizeBirthLocationToken, parseChatProfile } from "@/lib/profile";
 
 interface ParsedBirthProfile {
   raw: string;
@@ -132,6 +136,43 @@ const nakshatras = [
   "우타라 팔구니",
 ];
 
+const wuXingLabels: Record<"木" | "火" | "土" | "金" | "水", string> = {
+  木: "목",
+  火: "화",
+  土: "토",
+  金: "금",
+  水: "수",
+};
+
+const birthLocationCoordinates: Record<
+  string,
+  {
+    latitude: number;
+    longitude: number;
+  }
+> = {
+  서울: { latitude: 37.5665, longitude: 126.978 },
+  부산: { latitude: 35.1796, longitude: 129.0756 },
+  대구: { latitude: 35.8714, longitude: 128.6014 },
+  인천: { latitude: 37.4563, longitude: 126.7052 },
+  광주: { latitude: 35.1595, longitude: 126.8526 },
+  대전: { latitude: 36.3504, longitude: 127.3845 },
+  울산: { latitude: 35.5384, longitude: 129.3114 },
+  세종: { latitude: 36.48, longitude: 127.289 },
+  수원: { latitude: 37.2636, longitude: 127.0286 },
+  춘천: { latitude: 37.8813, longitude: 127.7298 },
+  강릉: { latitude: 37.7519, longitude: 128.8761 },
+  청주: { latitude: 36.6424, longitude: 127.489 },
+  천안: { latitude: 36.8151, longitude: 127.1139 },
+  전주: { latitude: 35.8242, longitude: 127.148 },
+  목포: { latitude: 34.8118, longitude: 126.3922 },
+  안동: { latitude: 36.5684, longitude: 128.7294 },
+  포항: { latitude: 36.019, longitude: 129.3435 },
+  창원: { latitude: 35.2281, longitude: 128.6811 },
+  진주: { latitude: 35.1799, longitude: 128.1076 },
+  제주: { latitude: 33.4996, longitude: 126.5312 },
+};
+
 function hashString(value: string): number {
   return [...value].reduce((accumulator, char, index) => {
     return (accumulator * 31 + char.charCodeAt(0) + index) % 1_000_003;
@@ -140,6 +181,93 @@ function hashString(value: string): number {
 
 function modulo(value: number, length: number): number {
   return ((value % length) + length) % length;
+}
+
+function getHeavenlyStemCell(hanja: string): ToolPillarCell {
+  const stem = heavenlyStems.find((item) => item.hanja === hanja);
+
+  if (!stem) {
+    throw new Error(`알 수 없는 천간입니다: ${hanja}`);
+  }
+
+  return stem;
+}
+
+function getEarthlyBranchCell(hanja: string): ToolPillarCell {
+  const branch = earthlyBranches.find((item) => item.hanja === hanja);
+
+  if (!branch) {
+    throw new Error(`알 수 없는 지지입니다: ${hanja}`);
+  }
+
+  return branch;
+}
+
+function toSolarBirthProfile(profile: ParsedBirthProfile): ParsedBirthProfile {
+  if (profile.calendarType !== "음력") {
+    return profile;
+  }
+
+  const lunar = Lunar.fromYmdHms(
+    profile.year,
+    profile.month,
+    profile.day,
+    profile.hour,
+    profile.minute,
+    0,
+  );
+  const solar = lunar.getSolar();
+
+  return {
+    ...profile,
+    year: solar.getYear(),
+    month: solar.getMonth(),
+    day: solar.getDay(),
+  };
+}
+
+function formatWuXingStrength(strength: {
+  木: number;
+  火: number;
+  土: number;
+  金: number;
+  水: number;
+}): string {
+  return (Object.entries(strength) as [keyof typeof wuXingLabels, number][])
+    .map(([key, value]) => `${wuXingLabels[key]} ${value}`)
+    .join(" · ");
+}
+
+function createSajuSummary(profile: ParsedBirthProfile, bazi: Bazi): string {
+  const siZhu = bazi.getSiZhu();
+  const strengthAnalysis = bazi.getStrengthAnalysis();
+  const yongShenAnalysis = bazi.getYongShenAnalysis();
+  const shenShaAnalysis = bazi.getShenShaAnalysis();
+  const shiShenConfig = bazi.getShiShenConfig();
+  const topGoodStars = shenShaAnalysis.auspicious.slice(0, 2).map(({ name }) => name);
+  const topCautionStars = shenShaAnalysis.inauspicious.slice(0, 2).map(({ name }) => name);
+  const monthRole = shiShenConfig.monthGan.shiShen;
+  const hourRole = shiShenConfig.hourGan.shiShen;
+  const favoredElements = yongShenAnalysis.xiYongShen
+    .map((item) => wuXingLabels[item])
+    .join(", ");
+  const cautionElements = yongShenAnalysis.jiShen.map((item) => wuXingLabels[item]).join(", ");
+  const starSentence = [
+    topGoodStars.length > 0 ? `길성은 ${topGoodStars.join(", ")}` : "",
+    topCautionStars.length > 0 ? `주의 신살은 ${topCautionStars.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("이며 ");
+
+  return [
+    profile.birthTimeKnown
+      ? `${siZhu.day.gan}${siZhu.day.zhi} 일주를 중심으로 ${strengthAnalysis.isStrong ? "신강" : "신약"} 판정이며, 월간 ${shiShenConfig.monthGan.gan}의 ${monthRole}와 시간 ${shiShenConfig.hourGan.gan}의 ${hourRole} 성향이 함께 두드러집니다.`
+      : `${siZhu.day.gan}${siZhu.day.zhi} 일주를 중심으로 ${strengthAnalysis.isStrong ? "신강" : "신약"} 판정이며, 월간 ${shiShenConfig.monthGan.gan}의 ${monthRole} 흐름이 중심축으로 읽힙니다.`,
+    `희용신은 ${favoredElements || "판단 보류"}, 기신은 ${cautionElements || "판단 보류"} 쪽으로 읽히고 오행 분포는 ${formatWuXingStrength(strengthAnalysis.wuXingStrength)}입니다.`,
+    starSentence
+      ? `${starSentence} 현재 질문은 타고난 강점을 밀어붙이기보다 균형을 맞추는 쪽에서 해석하는 편이 정확합니다.`
+      : `${profile.birthTimeKnown ? "시주까지 반영된" : "시주를 제외한"} 원국 기준으로 균형과 편중을 함께 보는 해석이 유효합니다.`,
+  ].join(" ");
 }
 
 function parseBirthProfile(rawProfile: string): ParsedBirthProfile {
@@ -161,6 +289,7 @@ function parseBirthProfile(rawProfile: string): ParsedBirthProfile {
       gender: structuredProfile.gender || "미입력",
       calendarType: structuredProfile.calendarType || "양력",
       birthTimeKnown: structuredProfile.birthTimeKnown,
+      location: normalizeBirthLocationToken(structuredProfile.location) || undefined,
     };
   }
 
@@ -191,27 +320,16 @@ function parseBirthProfile(rawProfile: string): ParsedBirthProfile {
       gender: gender?.startsWith("여") ? "여" : "남",
       calendarType: normalizedProfile.includes("음력") ? "음력" : "양력",
       birthTimeKnown: true,
-      location:
+      location: normalizeBirthLocationToken(
         location
           ?.replace(/출생|생시|출생지/g, "")
           .replace(/[ ,]+$/g, "")
-          .trim() || undefined,
+          .trim() ?? "",
+      ),
     };
   }
 
-  const fallbackSeed = hashString(normalizedProfile);
-
-  return {
-    raw: normalizedProfile,
-    year: 1990 + modulo(fallbackSeed, 20),
-    month: modulo(fallbackSeed, 12) + 1,
-    day: modulo(fallbackSeed, 28) + 1,
-    hour: modulo(fallbackSeed, 24),
-    minute: modulo(fallbackSeed, 60),
-    gender: fallbackSeed % 2 === 0 ? "남" : "여",
-    calendarType: "양력",
-    birthTimeKnown: true,
-  };
+  throw new Error("출생 정보를 정확히 해석할 수 없습니다. 프로필을 다시 저장해 주세요.");
 }
 
 function formatBirthArgs(profile: ParsedBirthProfile, includeLocation = false): string {
@@ -230,20 +348,36 @@ function createExecutionId(toolKey: ToolKey): string {
   return `tool-${toolKey}-${randomPart}`;
 }
 
-function buildSajuResult(profile: ParsedBirthProfile, question: string): ToolExecutionResult {
-  const seed = hashString(`${profile.raw}:${question}:saju`);
+function buildSajuResult(profile: ParsedBirthProfile, _question: string): ToolExecutionResult {
+  const solarProfile = toSolarBirthProfile(profile);
+  const bazi = new Bazi({
+    year: solarProfile.year,
+    month: solarProfile.month,
+    day: solarProfile.day,
+    hour: solarProfile.hour,
+    minute: solarProfile.minute,
+    gender: solarProfile.gender === "여" ? "female" : "male",
+  });
+  const siZhu = bazi.getSiZhu();
   const heavenly = [
-    heavenlyStems[modulo(profile.hour + profile.day + seed, heavenlyStems.length)],
-    heavenlyStems[modulo(profile.day + seed, heavenlyStems.length)],
-    heavenlyStems[modulo(profile.month + seed, heavenlyStems.length)],
-    heavenlyStems[modulo(profile.year + seed, heavenlyStems.length)],
+    getHeavenlyStemCell(siZhu.hour.gan),
+    getHeavenlyStemCell(siZhu.day.gan),
+    getHeavenlyStemCell(siZhu.month.gan),
+    getHeavenlyStemCell(siZhu.year.gan),
   ];
   const earthly = [
-    earthlyBranches[modulo(Math.floor(profile.hour / 2) + seed, earthlyBranches.length)],
-    earthlyBranches[modulo(profile.day + seed, earthlyBranches.length)],
-    earthlyBranches[modulo(profile.month + seed, earthlyBranches.length)],
-    earthlyBranches[modulo(profile.year + seed, earthlyBranches.length)],
+    getEarthlyBranchCell(siZhu.hour.zhi),
+    getEarthlyBranchCell(siZhu.day.zhi),
+    getEarthlyBranchCell(siZhu.month.zhi),
+    getEarthlyBranchCell(siZhu.year.zhi),
   ];
+  const visibleHeaders = profile.birthTimeKnown
+    ? ["시주", "일주", "월주", "년주"]
+    : ["일주", "월주", "년주"];
+  const visibleHeavenly = profile.birthTimeKnown ? heavenly : heavenly.slice(1);
+  const visibleEarthly = profile.birthTimeKnown ? earthly : earthly.slice(1);
+  const strengthAnalysis = bazi.getStrengthAnalysis();
+  const yongShenAnalysis = bazi.getYongShenAnalysis();
 
   return {
     id: createExecutionId("saju"),
@@ -251,14 +385,22 @@ function buildSajuResult(profile: ParsedBirthProfile, question: string): ToolExe
     label: toolCatalog.saju.label,
     status: "success",
     args: formatBirthArgs(profile),
-    summary:
-      "일주와 월주 축이 강하게 잡혀 있어 중요한 선택은 타이밍을 늦추기보다 흐름을 타는 쪽이 유리합니다.",
+    summary: createSajuSummary(profile, bazi),
     variant: "saju",
     pillars: {
-      headers: ["시주", "일주", "월주", "년주"],
-      heavenly,
-      earthly,
-      note: "혹시 만세력이 다르게 나왔다면 출생지나 양력/음력 여부를 다시 확인해 보세요.",
+      headers: visibleHeaders,
+      heavenly: visibleHeavenly,
+      earthly: visibleEarthly,
+      note: [
+        `신강신약: ${strengthAnalysis.isStrong ? "신강" : "신약"}`,
+        `희용신: ${yongShenAnalysis.xiYongShen.map((item) => wuXingLabels[item]).join(", ")}`,
+        profile.calendarType === "음력"
+          ? "음력 입력을 양력으로 환산해 계산했습니다."
+          : "양력 기준으로 계산했습니다.",
+        profile.birthTimeKnown
+          ? "출생시각을 반영했습니다."
+          : "출생시각이 없어 시주는 표기하지 않았습니다.",
+      ].join(" · "),
     },
   };
 }
@@ -317,11 +459,105 @@ function createPlacement(
   } satisfies ToolPreviewBadge;
 }
 
+function formatDecimalDegrees(decimalDegrees: number): string {
+  const degrees = Math.floor(decimalDegrees);
+  const minutes = Math.floor((decimalDegrees - degrees) * 60);
+
+  return `${String(degrees).padStart(2, "0")}° ${String(minutes).padStart(2, "0")}'`;
+}
+
+function createAstrologyPlacementFromChart(
+  label: string,
+  chart: {
+    Sign: {
+      zodiacStart: number;
+      label: string;
+    };
+    ChartPosition: {
+      Ecliptic: {
+        DecimalDegrees: number;
+      };
+    };
+    House?: {
+      id: number;
+    };
+  },
+  tone: ToolPreviewBadge["tone"],
+): ToolPreviewBadge {
+  const decimalDegrees = chart.ChartPosition.Ecliptic.DecimalDegrees;
+  const signDegrees = decimalDegrees - chart.Sign.zodiacStart;
+  const houseText = chart.House ? ` · ${chart.House.id}하우스` : "";
+
+  return {
+    label,
+    value: zodiacSigns[Math.floor(chart.Sign.zodiacStart / 30)] ?? chart.Sign.label,
+    subvalue: `${formatDecimalDegrees(signDegrees)}${houseText}`,
+    tone,
+  };
+}
+
+function createAstrologySummary(
+  profile: ParsedBirthProfile,
+  placements: ToolPreviewBadge[],
+): string {
+  const sun = placements.find(({ label }) => label === "☉ 태양");
+  const moon = placements.find(({ label }) => label === "☽ 달");
+  const mercury = placements.find(({ label }) => label === "☿ 수성");
+  const venus = placements.find(({ label }) => label === "♀ 금성");
+
+  return [
+    `${sun?.value ?? "태양"} 태양과 ${moon?.value ?? "달"} 달 조합이라 핵심 방향성과 감정 반응의 결이 비교적 선명하게 드러나는 차트입니다.`,
+    `${mercury?.value ?? "수성"} 수성은 사고와 표현 방식, ${venus?.value ?? "금성"} 금성은 관계 취향 쪽 색을 더하므로 이번 해석은 성향과 관계 패턴 중심으로 읽는 편이 정확합니다.`,
+    profile.birthTimeKnown
+      ? `${profile.location} 기준 좌표를 반영해 ASC·MC와 행성 하우스까지 실제 출생차트 계산으로 넣었습니다.`
+      : `${profile.location} 기준 좌표를 반영했지만 출생시각이 없어 ASC·MC와 하우스는 제외하고 행성 위치만 실제 계산했습니다.`,
+  ].join(" ");
+}
+
 function buildAstrologyResult(
   profile: ParsedBirthProfile,
-  question: string,
+  _question: string,
 ): ToolExecutionResult {
-  const seed = hashString(`${profile.raw}:${question}:astrology`);
+  const locationKey = normalizeBirthLocationToken(profile.location ?? "");
+  const coordinates = birthLocationCoordinates[locationKey];
+
+  if (!coordinates) {
+    throw new Error("출생지는 서울, 대구, 부산처럼 지원되는 도시명으로 입력해 주세요.");
+  }
+
+  const solarProfile = toSolarBirthProfile(profile);
+  const origin = new Origin({
+    year: solarProfile.year,
+    month: solarProfile.month - 1,
+    date: solarProfile.day,
+    hour: solarProfile.hour,
+    minute: solarProfile.minute,
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
+  });
+  const horoscope = new Horoscope({
+    origin,
+    houseSystem: "whole-sign",
+    zodiac: "tropical",
+    aspectPoints: [],
+    aspectWithPoints: [],
+    aspectTypes: [],
+    customOrbs: {},
+    language: "en",
+  });
+  const placements = [
+    ...(profile.birthTimeKnown
+      ? [
+          createAstrologyPlacementFromChart("ASC", horoscope.Ascendant, "cyan"),
+          createAstrologyPlacementFromChart("MC", horoscope.Midheaven, "emerald"),
+        ]
+      : []),
+    createAstrologyPlacementFromChart("☉ 태양", horoscope.CelestialBodies.sun, "rose"),
+    createAstrologyPlacementFromChart("☽ 달", horoscope.CelestialBodies.moon, "amber"),
+    createAstrologyPlacementFromChart("☿ 수성", horoscope.CelestialBodies.mercury, "cyan"),
+    createAstrologyPlacementFromChart("♀ 금성", horoscope.CelestialBodies.venus, "emerald"),
+    createAstrologyPlacementFromChart("♂ 화성", horoscope.CelestialBodies.mars, "violet"),
+  ];
 
   return {
     id: createExecutionId("astrology"),
@@ -329,15 +565,9 @@ function buildAstrologyResult(
     label: toolCatalog.astrology.label,
     status: "success",
     args: formatBirthArgs(profile, true),
-    summary:
-      "상승점과 태양이 감정선보다 방향성을 더 크게 끌고 가는 타입으로, 큰 인생 테마가 선명한 편입니다.",
+    summary: createAstrologySummary(profile, placements),
     variant: "astrology",
-    placements: [
-      createPlacement("ASC", profile.hour + seed, seed + profile.minute, "cyan"),
-      createPlacement("MC", profile.month + seed, seed + profile.day, "emerald"),
-      createPlacement("☉ 태양", profile.day + seed, seed + profile.year, "rose"),
-      createPlacement("☽ 달", profile.month + profile.day + seed, seed + profile.hour, "amber"),
-    ],
+    placements,
   };
 }
 
@@ -473,166 +703,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isElementTone(value: unknown): value is ToolPillarCell["element"] {
-  return ["wood", "fire", "earth", "metal", "water"].includes(String(value));
-}
-
-function isBadgeTone(value: unknown): value is ToolPreviewBadge["tone"] {
-  return ["amber", "cyan", "emerald", "rose", "violet", "slate"].includes(String(value));
-}
-
-function parseToolPillarCell(value: unknown): ToolPillarCell | null {
-  if (!isRecord(value) || typeof value.hanja !== "string" || typeof value.label !== "string") {
-    return null;
-  }
-
-  if (!isElementTone(value.element)) {
-    return null;
-  }
-
-  return {
-    hanja: value.hanja,
-    label: value.label,
-    element: value.element,
-  };
-}
-
-function parsePreviewBadge(value: unknown): ToolPreviewBadge | null {
-  if (!isRecord(value) || typeof value.label !== "string" || typeof value.value !== "string") {
-    return null;
-  }
-
-  return {
-    label: value.label,
-    value: value.value,
-    subvalue: typeof value.subvalue === "string" ? value.subvalue : undefined,
-    tone: isBadgeTone(value.tone) ? value.tone : undefined,
-  };
-}
-
-function parseTarotCard(value: unknown): ToolTarotCard | null {
-  if (
-    !isRecord(value) ||
-    typeof value.slot !== "string" ||
-    typeof value.name !== "string" ||
-    typeof value.meaning !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    slot: value.slot,
-    name: value.name,
-    meaning: value.meaning,
-  };
-}
-
-function parseZiweiPalace(value: unknown): ToolZiweiPalace | null {
-  if (
-    !isRecord(value) ||
-    typeof value.name !== "string" ||
-    !Array.isArray(value.stars) ||
-    !value.stars.every((star) => typeof star === "string") ||
-    typeof value.branch !== "string"
-  ) {
-    return null;
-  }
-
-  const emphasis = ["ming", "shen", "core"].includes(String(value.emphasis))
-    ? (value.emphasis as ToolZiweiPalace["emphasis"])
-    : undefined;
-
-  return {
-    name: value.name,
-    stars: value.stars,
-    branch: value.branch,
-    emphasis,
-  };
-}
-
-function parseSajuPillars(
-  value: unknown,
-): Extract<ToolExecutionResult, { variant: "saju" }>["pillars"] | null {
-  if (!isRecord(value) || !Array.isArray(value.headers)) {
-    return null;
-  }
-
-  const heavenly = Array.isArray(value.heavenly) ? value.heavenly.map(parseToolPillarCell) : [];
-  const earthly = Array.isArray(value.earthly) ? value.earthly.map(parseToolPillarCell) : [];
-
-  if (
-    !value.headers.every((header) => typeof header === "string") ||
-    heavenly.some((cell) => cell === null) ||
-    earthly.some((cell) => cell === null) ||
-    heavenly.length === 0 ||
-    earthly.length === 0 ||
-    typeof value.note !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    headers: value.headers,
-    heavenly: heavenly as ToolPillarCell[],
-    earthly: earthly as ToolPillarCell[],
-    note: value.note,
-  };
-}
-
-function parseZiweiGrid(
-  value: unknown,
-): Extract<ToolExecutionResult, { variant: "ziwei" }>["grid"] | null {
-  if (
-    !isRecord(value) ||
-    !Array.isArray(value.palaces) ||
-    typeof value.centerTitle !== "string" ||
-    !Array.isArray(value.centerLines) ||
-    !value.centerLines.every((line) => typeof line === "string")
-  ) {
-    return null;
-  }
-
-  const palaces = value.palaces.map(parseZiweiPalace);
-
-  if (palaces.some((palace) => palace === null) || palaces.length === 0) {
-    return null;
-  }
-
-  return {
-    palaces: palaces as ToolZiweiPalace[],
-    centerTitle: value.centerTitle,
-    centerLines: value.centerLines,
-  };
-}
-
-function parseBadgeArray(value: unknown): ToolPreviewBadge[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
-  const badges = value.map(parsePreviewBadge);
-
-  if (badges.some((badge) => badge === null) || badges.length === 0) {
-    return null;
-  }
-
-  return badges as ToolPreviewBadge[];
-}
-
-function parseTarotCardArray(value: unknown): ToolTarotCard[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
-  const cards = value.map(parseTarotCard);
-
-  if (cards.some((card) => card === null) || cards.length === 0) {
-    return null;
-  }
-
-  return cards as ToolTarotCard[];
-}
-
 export function mergeStructuredToolAnalysisResult(
   baseResult: ToolExecutionResult,
   payload: unknown,
@@ -646,57 +716,10 @@ export function mergeStructuredToolAnalysisResult(
       ? payload.summary.trim()
       : baseResult.summary;
 
-  switch (baseResult.variant) {
-    case "saju": {
-      const pillars = parseSajuPillars(payload.pillars) ?? baseResult.pillars;
-
-      return {
-        ...baseResult,
-        summary,
-        pillars,
-      };
-    }
-    case "ziwei": {
-      const grid = parseZiweiGrid(payload.grid) ?? baseResult.grid;
-
-      return {
-        ...baseResult,
-        summary,
-        grid,
-      };
-    }
-    case "astrology":
-    case "vedic": {
-      const placements = parseBadgeArray(payload.placements) ?? baseResult.placements;
-
-      return {
-        ...baseResult,
-        summary,
-        placements,
-      };
-    }
-    case "tarot": {
-      const cards = parseTarotCardArray(payload.cards) ?? baseResult.cards;
-
-      return {
-        ...baseResult,
-        summary,
-        cards,
-      };
-    }
-    case "sukyo":
-    case "mahabote": {
-      const badges = parseBadgeArray(payload.badges) ?? baseResult.badges;
-
-      return {
-        ...baseResult,
-        summary,
-        badges,
-      };
-    }
-    default:
-      return baseResult;
-  }
+  return {
+    ...baseResult,
+    summary,
+  };
 }
 
 function assertNever(value: never): never {

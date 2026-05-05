@@ -1,8 +1,13 @@
 "use client";
 
 import { Check, CircleHelp } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { type ToolExecutionResult, type ToolPreviewBadge } from "@/lib/lumo-content";
+import {
+  toolCatalog,
+  type ToolExecutionResult,
+  type ToolPreviewBadge,
+} from "@/lib/lumo-content";
 import { cn } from "@/lib/utils";
 
 interface ToolRunResultsProps {
@@ -12,13 +17,13 @@ interface ToolRunResultsProps {
 const elementClassName = {
   wood: "text-emerald-300",
   fire: "text-rose-300",
-  earth: "text-amber-200",
+  earth: "text-orange-200",
   metal: "text-slate-100",
   water: "text-cyan-300",
 } as const;
 
 const badgeToneClassName = {
-  amber: "border-amber-300/20 bg-amber-300/10 text-amber-100",
+  amber: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
   cyan: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
   emerald: "border-emerald-300/20 bg-emerald-300/10 text-emerald-100",
   rose: "border-rose-300/20 bg-rose-300/10 text-rose-100",
@@ -53,12 +58,12 @@ function SajuPreview({
   result: Extract<ToolExecutionResult, { variant: "saju" }>;
 }) {
   return (
-    <div className="max-w-full overflow-x-auto rounded-[20px] border border-white/10 bg-white/4 p-2.5 md:rounded-[24px] md:p-3">
-      <table className="w-full min-w-70 table-fixed text-center md:min-w-[320px]">
+    <div className="max-w-full overflow-x-auto rounded-[18px] border border-white/10 bg-white/4 p-2 md:rounded-[22px] md:p-2.5">
+      <table className="w-full min-w-64 table-fixed text-center md:min-w-75">
         <thead>
-          <tr className="text-[11px] text-zinc-500">
+          <tr className="text-[10px] text-zinc-500 md:text-[11px]">
             {result.pillars.headers.map((header) => (
-              <th key={header} className="pb-2 font-medium">
+              <th key={header} className="pb-1.5 font-medium">
                 {header}
               </th>
             ))}
@@ -73,13 +78,15 @@ function SajuPreview({
                 <td key={`${pillarHeader}-${cell.hanja}`} className="pb-1 align-top">
                   <div
                     className={cn(
-                      "text-[28px] font-semibold md:text-3xl",
+                      "text-[24px] leading-none font-semibold md:text-[28px]",
                       elementClassName[cell.element],
                     )}
                   >
                     {cell.hanja}
                   </div>
-                  <div className="text-[11px] text-zinc-400 md:text-xs">{cell.label}</div>
+                  <div className="mt-0.5 text-[10px] text-zinc-400 md:text-[11px]">
+                    {cell.label}
+                  </div>
                 </td>
               );
             })}
@@ -92,13 +99,15 @@ function SajuPreview({
                 <td key={`${pillarHeader}-${cell.hanja}`} className="pt-1 align-top">
                   <div
                     className={cn(
-                      "text-[28px] font-semibold md:text-3xl",
+                      "text-[24px] leading-none font-semibold md:text-[28px]",
                       elementClassName[cell.element],
                     )}
                   >
                     {cell.hanja}
                   </div>
-                  <div className="text-[11px] text-zinc-400 md:text-xs">{cell.label}</div>
+                  <div className="mt-0.5 text-[10px] text-zinc-400 md:text-[11px]">
+                    {cell.label}
+                  </div>
                 </td>
               );
             })}
@@ -106,7 +115,7 @@ function SajuPreview({
         </tbody>
       </table>
 
-      <div className="mt-2.5 inline-flex items-center gap-1 text-[11px] text-zinc-400 md:mt-3 md:text-xs">
+      <div className="mt-2 inline-flex items-center gap-1 text-[10px] text-zinc-400 md:mt-2.5 md:text-[11px]">
         <CircleHelp className="size-3.5" />
         {result.pillars.note}
       </div>
@@ -126,7 +135,7 @@ function ZiweiPreview({
           key={`${palace.name}-${palace.branch}`}
           className={cn(
             "rounded-xl border border-white/10 bg-[#181926] px-2.5 py-2 md:rounded-2xl md:px-3 md:py-2.5",
-            palace.emphasis === "ming" && "border-amber-300/25",
+            palace.emphasis === "ming" && "border-cyan-300/25",
             palace.emphasis === "core" && "border-cyan-300/20",
           )}
         >
@@ -208,13 +217,39 @@ function ToolPreview({ result }: { result: ToolExecutionResult }) {
 }
 
 function ToolRunResults({ toolResults }: ToolRunResultsProps) {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setIsVisible(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [toolResults]);
+
   return (
     <div className="max-w-full min-w-0 space-y-2.5 overflow-hidden md:space-y-3">
-      {toolResults.map((result) => (
-        <div key={result.id} className="min-w-0 space-y-2 md:space-y-2.5">
+      {toolResults.map((result, index) => (
+        <div
+          key={result.id}
+          className={cn(
+            "min-w-0 space-y-2 transition-all duration-500 md:space-y-2.5",
+            isVisible
+              ? "blur-0 translate-y-0 opacity-100"
+              : "translate-y-2 opacity-0 blur-[2px]",
+          )}
+          style={{ transitionDelay: `${index * 90}ms` }}
+        >
           <div className="inline-flex flex-wrap items-center gap-1.5 rounded-full border border-emerald-400/15 bg-emerald-400/10 px-2.5 py-1 text-[11px] text-emerald-100 md:gap-2 md:px-3 md:text-xs">
             <Check className="size-3.5" />
             <span className="font-semibold">{result.label}</span>
+            {toolCatalog[result.toolKey].beta ? (
+              <span className="rounded-full border border-amber-300/20 bg-amber-300/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em] text-amber-100 uppercase">
+                beta
+              </span>
+            ) : null}
             <span>분석 완료</span>
             <span className="break-all text-emerald-100/75">({result.args})</span>
           </div>

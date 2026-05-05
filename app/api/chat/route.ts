@@ -27,6 +27,7 @@ import {
   type ToolExecutionResult,
 } from "@/lib/lumo-content";
 import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
+import { parseChatProfile, parseProfileSelection } from "@/lib/profile";
 import {
   createToolAnalysisResults,
   mergeStructuredToolAnalysisResult,
@@ -40,6 +41,7 @@ interface ChatMessageDocument {
   content: string;
   createdAt: string;
   toolResults?: ToolExecutionResult[];
+  followUpSuggestions?: string[];
 }
 
 interface ConversationSessionDocument {
@@ -60,6 +62,7 @@ interface ConversationSessionDocument {
 interface UserProfileDocument {
   userId: string;
   activeProfile: string;
+  activeProfiles?: string[];
   profiles: string[];
   name?: string | null;
   image?: string | null;
@@ -78,6 +81,47 @@ class LumoRouteError extends Error {
 interface ToolAnalysisMessage {
   toolKey: ChatRequestPayload["tools"][number];
   message: ChatMessage;
+}
+
+interface ToolAnalysisRunResult {
+  promptMessages: ToolAnalysisMessage[];
+  streamedMessages: ToolAnalysisMessage[];
+  skippedAll: boolean;
+}
+
+function buildToolResultCacheKey(result: ToolExecutionResult): string {
+  return `${result.toolKey}::${result.args}`;
+}
+
+function findLatestResolvedToolBlock(
+  messages: ChatRequestPayload["messages"],
+): ChatRequestPayload["messages"] {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (!message || message.role !== "assistant") {
+      // Skip non-assistant messages until the last completed assistant turn is found.
+    } else {
+      const toolBlock: ChatRequestPayload["messages"] = [];
+      let cursor = index - 1;
+
+      while (cursor >= 0 && messages[cursor]?.role === "tool") {
+        const toolMessage = messages[cursor];
+
+        if (toolMessage?.toolResults?.length) {
+          toolBlock.unshift(toolMessage);
+        }
+
+        cursor -= 1;
+      }
+
+      if (toolBlock.length > 0) {
+        return toolBlock;
+      }
+    }
+  }
+
+  return [];
 }
 
 function sanitizeGeneratedTitle(rawTitle: string, fallbackTitle: string): string {
@@ -261,6 +305,7 @@ function toMessageDocument(message: ChatMessage): ChatMessageDocument {
     content: message.content,
     createdAt: message.createdAt,
     toolResults: message.toolResults,
+    followUpSuggestions: message.followUpSuggestions,
   };
 }
 
@@ -305,18 +350,24 @@ async function persistConversation(
 
   try {
     const database = await getMongoDatabase();
+    const selectedProfiles = parseProfileSelection(body.profile);
+    const primaryProfile = selectedProfiles[0] ?? body.profile;
+
     await database.collection<UserProfileDocument>("userProfiles").updateOne(
       { userId },
       {
         $set: {
           userId,
-          activeProfile: body.profile,
+          activeProfile: primaryProfile,
+          activeProfiles: selectedProfiles.length > 0 ? selectedProfiles : [primaryProfile],
           name: userName,
           image: userImage,
           updatedAt: new Date().toISOString(),
         },
         $addToSet: {
-          profiles: body.profile,
+          profiles: {
+            $each: selectedProfiles.length > 0 ? selectedProfiles : [primaryProfile],
+          },
         },
       },
       { upsert: true },
@@ -504,62 +555,129 @@ async function generateLumoJsonReply(prompt: string, modelIndex: number): Promis
 async function generateSequentialToolMessages(
   body: ChatRequestPayload,
   onToolMessage: (message: ChatMessage) => void,
-): Promise<ToolAnalysisMessage[]> {
-  const toolMessages: ToolAnalysisMessage[] = [];
-  const baseToolResults = createToolAnalysisResults({
-    profile: body.profile,
-    question: body.question,
-    tools: body.tools,
-  });
+): Promise<ToolAnalysisRunResult> {
+  const promptMessages: ToolAnalysisMessage[] = [];
+  const streamedMessages: ToolAnalysisMessage[] = [];
+  const selectedProfiles = parseProfileSelection(body.profile);
+  const normalizedProfiles = selectedProfiles.length > 0 ? selectedProfiles : [body.profile];
+  const previousToolBlock = findLatestResolvedToolBlock(body.messages);
+  const previousToolMessageByCacheKey = new Map(
+    previousToolBlock.flatMap((message) =>
+      (message.toolResults ?? []).map((result) => [
+        buildToolResultCacheKey(result),
+        {
+          toolKey: result.toolKey,
+          message: {
+            id: message.id,
+            role: "tool" as const,
+            content: message.content,
+            createdAt: message.createdAt,
+            toolResults: message.toolResults,
+          },
+        } satisfies ToolAnalysisMessage,
+      ]),
+    ),
+  );
 
-  const createNextMessage = async (toolIndex: number): Promise<void> => {
-    const toolKey = body.tools[toolIndex];
+  async function processNext(
+    profileIndex: number,
+    toolIndex: number,
+    currentProfileMessages: ToolAnalysisMessage[],
+  ): Promise<void> {
+    const selectedProfile = normalizedProfiles[profileIndex];
 
-    if (!toolKey) {
+    if (!selectedProfile) {
       return;
     }
 
+    const toolKey = body.tools[toolIndex];
+
+    if (!toolKey) {
+      await processNext(profileIndex + 1, 0, []);
+      return;
+    }
+
+    const baseToolResults = createToolAnalysisResults({
+      profile: selectedProfile,
+      question: body.question,
+      tools: body.tools,
+    });
     const baseToolResult = baseToolResults.find((result) => result.toolKey === toolKey);
 
     if (!baseToolResult) {
       throw new LumoRouteError("도구 분석 UI 결과를 생성하지 못했습니다.", 500);
     }
 
+    const cachedToolMessage = previousToolMessageByCacheKey.get(
+      buildToolResultCacheKey(baseToolResult),
+    );
+
+    if (cachedToolMessage) {
+      currentProfileMessages.push(cachedToolMessage);
+      promptMessages.push(cachedToolMessage);
+      await processNext(profileIndex, toolIndex + 1, currentProfileMessages);
+      return;
+    }
+
+    const profileFields = parseChatProfile(selectedProfile);
+    const profileLabel = profileFields.name.trim() || `프로필 ${profileIndex + 1}`;
     const prompt = buildToolAnalysisPrompt({
-      profile: body.profile,
+      profile: selectedProfile,
       question: body.question,
       toolKey,
       seedResult: baseToolResult,
-      previousToolAnalyses: toolMessages.map(({ toolKey: previousToolKey, message }) => ({
-        toolKey: previousToolKey,
-        content: message.content,
-      })),
+      previousToolAnalyses: currentProfileMessages.map(
+        ({ toolKey: previousToolKey, message }) => ({
+          toolKey: previousToolKey,
+          content: message.content,
+        }),
+      ),
       messages: body.messages,
     });
     const structuredPayload = await generateLumoJsonReply(prompt, 0).catch(async () => ({
       summary: (await generateLumoReply(prompt, 0)).trim(),
     }));
-    const nextToolResult = mergeStructuredToolAnalysisResult(baseToolResult, structuredPayload);
+    const mergedToolResult = mergeStructuredToolAnalysisResult(
+      baseToolResult,
+      structuredPayload,
+    );
+    const nextToolResult = {
+      ...mergedToolResult,
+      label: `${profileLabel} · ${mergedToolResult.label}`,
+    };
+    const nextToolMessage = createChatMessage(
+      "tool",
+      `[${buildToolMessageLabel(toolKey)} · ${profileLabel}]\n${nextToolResult.summary}`,
+      {
+        toolResults: [nextToolResult],
+      },
+    );
 
-    toolMessages.push({
+    currentProfileMessages.push({
       toolKey,
-      message: createChatMessage(
-        "tool",
-        `[${buildToolMessageLabel(toolKey)}]\n${nextToolResult.summary}`,
-        {
-          toolResults: [nextToolResult],
-        },
-      ),
+      message: nextToolMessage,
+    });
+    promptMessages.push({
+      toolKey,
+      message: nextToolMessage,
+    });
+    streamedMessages.push({
+      toolKey,
+      message: nextToolMessage,
     });
 
-    onToolMessage(toolMessages[toolMessages.length - 1].message);
+    onToolMessage(nextToolMessage);
 
-    await createNextMessage(toolIndex + 1);
+    await processNext(profileIndex, toolIndex + 1, currentProfileMessages);
+  }
+
+  await processNext(0, 0, []);
+
+  return {
+    promptMessages,
+    streamedMessages,
+    skippedAll: promptMessages.length > 0 && streamedMessages.length === 0,
   };
-
-  await createNextMessage(0);
-
-  return toolMessages;
 }
 
 export async function POST(request: Request) {
@@ -615,7 +733,7 @@ export async function POST(request: Request) {
         };
 
         try {
-          const toolMessages = await generateSequentialToolMessages(
+          const toolRunResult = await generateSequentialToolMessages(
             {
               ...body,
               messages: sanitizedMessages,
@@ -625,11 +743,21 @@ export async function POST(request: Request) {
             },
           );
 
+          if (toolRunResult.skippedAll) {
+            enqueueEvent({
+              type: "tool",
+              message: createChatMessage(
+                "tool",
+                "분석 스킵됨\n선택한 도구 변경이 없어 기존 분석을 그대로 사용합니다.",
+              ),
+            });
+          }
+
           const prompt = buildLumoChatPrompt({
             ...body,
             messages: [
+              ...toolRunResult.promptMessages.map(({ message }) => toMessageDocument(message)),
               ...sanitizedMessages,
-              ...toolMessages.map(({ message }) => toMessageDocument(message)),
             ],
           });
           const responseStream = await generateLumoReplyStream(prompt, 0);
@@ -663,7 +791,9 @@ export async function POST(request: Request) {
             body,
             [
               ...sanitizedMessages,
-              ...toolMessages.map(({ message }) => toMessageDocument(message)),
+              ...toolRunResult.streamedMessages.map(({ message }) =>
+                toMessageDocument(message),
+              ),
             ],
             assistantText,
             userId,

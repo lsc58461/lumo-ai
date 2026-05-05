@@ -23,6 +23,11 @@ import {
   type ConversationSession,
   type PromptTemplate,
 } from "@/lib/lumo-content";
+import {
+  parseProfileSelection,
+  replaceProfileInSelection,
+  serializeProfileSelection,
+} from "@/lib/profile";
 
 interface HomeShellProps {
   featuredPrompts: PromptTemplate[];
@@ -161,6 +166,30 @@ function HomeShell({
     [],
   );
 
+  const updateMessageFollowUps = useCallback(
+    (
+      conversation: ConversationSession,
+      messageId: string,
+      followUpSuggestions: string[],
+    ): ConversationSession => ({
+      ...conversation,
+      messages: conversation.messages.map((message) =>
+        message.id === messageId ? { ...message, followUpSuggestions } : message,
+      ),
+    }),
+    [],
+  );
+
+  const removePendingToolMessages = useCallback(
+    (conversation: ConversationSession): ConversationSession => ({
+      ...conversation,
+      messages: conversation.messages.filter(
+        (message) => !(message.role === "tool" && message.pending),
+      ),
+    }),
+    [],
+  );
+
   const handleOpenLoginModal = useCallback((): void => {
     setIsLoginModalOpen(true);
   }, []);
@@ -249,10 +278,14 @@ function HomeShell({
   );
 
   const handleSaveProfile = useCallback(
-    async (profile: string): Promise<void> => {
+    async (
+      profile: string,
+      previousProfile?: string,
+      currentSelection?: string[],
+    ): Promise<string> => {
       if (!isAuthenticated) {
         setIsLoginModalOpen(true);
-        return;
+        return "";
       }
 
       const response = await fetch("/api/profile", {
@@ -260,12 +293,17 @@ function HomeShell({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ profile }),
+        body: JSON.stringify({
+          profile,
+          previousProfile,
+          activeProfiles: currentSelection,
+        }),
       });
 
       const data = (await response.json()) as {
         error?: string;
         activeProfile?: string;
+        activeProfiles?: string[];
         profiles?: string[];
       };
 
@@ -275,24 +313,75 @@ function HomeShell({
 
       const nextActiveProfile = data.activeProfile ?? profile;
       const nextProfiles = data.profiles ?? [profile];
+      const savedActiveProfiles = parseProfileSelection(
+        serializeProfileSelection(data.activeProfiles ?? []),
+      );
+      const normalizedSelection = currentSelection ?? [];
+      let nextSelectedProfiles = normalizedSelection;
 
-      setDefaultProfileValue(nextActiveProfile);
+      if (previousProfile) {
+        nextSelectedProfiles = parseProfileSelection(
+          replaceProfileInSelection(
+            serializeProfileSelection(normalizedSelection),
+            previousProfile,
+            profile,
+          ),
+        );
+      } else if (normalizedSelection.includes(profile)) {
+        nextSelectedProfiles = normalizedSelection;
+      } else if (normalizedSelection.length < 2) {
+        nextSelectedProfiles = [...normalizedSelection, profile];
+      } else {
+        nextSelectedProfiles = [normalizedSelection[0] ?? nextActiveProfile, profile];
+      }
+
+      if (savedActiveProfiles.length > 0) {
+        nextSelectedProfiles = savedActiveProfiles;
+      }
+
+      const nextSelectionValue =
+        nextSelectedProfiles.length > 0
+          ? serializeProfileSelection(nextSelectedProfiles)
+          : nextActiveProfile;
+
+      setDefaultProfileValue(nextSelectionValue);
       setSavedProfiles(nextProfiles);
       setDraftConversation((currentConversation) => ({
         ...currentConversation,
-        profile: nextActiveProfile,
+        profile: nextSelectionValue,
       }));
+
+      return nextSelectionValue;
     },
     [isAuthenticated],
   );
 
-  const handleSelectSavedProfile = useCallback((profile: string): void => {
-    setDefaultProfileValue(profile);
-    setDraftConversation((currentConversation) => ({
-      ...currentConversation,
-      profile,
-    }));
-  }, []);
+  const handleSelectSavedProfiles = useCallback(
+    (profiles: string[]): void => {
+      const nextSelectionValue = serializeProfileSelection(profiles);
+
+      setDefaultProfileValue(nextSelectionValue);
+      setDraftConversation((currentConversation) => ({
+        ...currentConversation,
+        profile: nextSelectionValue,
+      }));
+
+      if (!isAuthenticated) {
+        return;
+      }
+
+      fetch("/api/profile", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          activeProfiles: profiles,
+        }),
+      }).catch(() => undefined);
+    },
+    [isAuthenticated],
+  );
 
   const handleCreateShareLink = useCallback(async (conversationId: string): Promise<string> => {
     const response = await fetch("/api/share", {
@@ -313,6 +402,64 @@ function HomeShell({
 
     return `${window.location.origin}/?share=${data.shareId}`;
   }, []);
+
+  const requestFollowUpSuggestions = useCallback(
+    async (conversation: ConversationSession, question: string): Promise<void> => {
+      const assistantMessage = [...conversation.messages]
+        .reverse()
+        .find((message) => message.role === "assistant" && !message.pending);
+
+      if (!assistantMessage || assistantMessage.followUpSuggestions?.length) {
+        return;
+      }
+
+      const response = await fetch("/api/chat/follow-ups", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          conversationId: conversation.id.startsWith("draft-") ? undefined : conversation.id,
+          assistantMessageId: assistantMessage.id,
+          profile: conversation.profile,
+          question,
+          toneId: conversation.toneId,
+          tools: conversation.tools,
+          messages: conversation.messages.map(
+            ({ id, role, content, createdAt, toolResults: messageToolResults }) => ({
+              id,
+              role,
+              content,
+              createdAt,
+              toolResults: messageToolResults,
+            }),
+          ),
+        }),
+      });
+      const data = (await response.json()) as {
+        suggestions?: string[];
+      };
+      const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+
+      if (suggestions.length === 0) {
+        return;
+      }
+
+      setConversations((currentConversations) =>
+        currentConversations.map((currentConversation) =>
+          currentConversation.id === conversation.id
+            ? updateMessageFollowUps(currentConversation, assistantMessage.id, suggestions)
+            : currentConversation,
+        ),
+      );
+      setDraftConversation((currentConversation) =>
+        currentConversation.id === conversation.id
+          ? updateMessageFollowUps(currentConversation, assistantMessage.id, suggestions)
+          : currentConversation,
+      );
+    },
+    [updateMessageFollowUps],
+  );
 
   const handleSubmit = useCallback(
     async (draft: ChatComposerDraft): Promise<void> => {
@@ -413,6 +560,7 @@ function HomeShell({
           }
 
           if (payload.type === "chunk") {
+            streamedConversation = removePendingToolMessages(streamedConversation);
             streamedConversation = ensurePendingAssistantMessage(
               streamedConversation,
               pendingAssistantMessage,
@@ -429,11 +577,16 @@ function HomeShell({
           }
 
           if (payload.type === "done") {
+            streamedConversation = removePendingToolMessages(streamedConversation);
+            updateActiveConversation(streamedConversation);
             setConversations((currentConversations) =>
               upsertConversation(currentConversations, payload.conversation),
             );
             setActiveConversationId(payload.conversation.id);
             setRequestError("");
+            requestFollowUpSuggestions(payload.conversation, draft.question).catch(
+              () => undefined,
+            );
             return;
           }
 
@@ -489,6 +642,8 @@ function HomeShell({
       appendToolMessage,
       ensurePendingAssistantMessage,
       isAuthenticated,
+      removePendingToolMessages,
+      requestFollowUpSuggestions,
       updateActiveConversation,
       upsertMessageContent,
     ],
@@ -561,8 +716,16 @@ function HomeShell({
                   onCreateShareLink={handleCreateShareLink}
                   onRequestLogin={handleOpenLoginModal}
                   onSaveProfile={handleSaveProfile}
-                  onSelectSavedProfile={handleSelectSavedProfile}
+                  onSelectSavedProfile={handleSelectSavedProfiles}
                   onSubmit={handleSubmit}
+                  onFollowUpSelect={async (question) => {
+                    await handleSubmit({
+                      profile: activeConversation.profile,
+                      question,
+                      toneId: activeConversation.toneId,
+                      tools: activeConversation.tools,
+                    });
+                  }}
                 />
               </div>
             </SidebarInset>

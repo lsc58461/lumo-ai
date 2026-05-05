@@ -1,6 +1,7 @@
 export interface ChatProfileFields {
   name: string;
   birthDate: string;
+  location: string;
   gender: "남" | "여" | "";
   calendarType: "양력" | "음력" | "";
   birthTimeKnown: boolean;
@@ -10,11 +11,133 @@ export interface ChatProfileFields {
 export const defaultChatProfileFields: ChatProfileFields = {
   name: "",
   birthDate: "",
+  location: "",
   gender: "",
   calendarType: "",
   birthTimeKnown: false,
   birthTime: "",
 };
+
+export const supportedBirthLocations = [
+  "서울",
+  "부산",
+  "대구",
+  "인천",
+  "광주",
+  "대전",
+  "울산",
+  "세종",
+  "수원",
+  "춘천",
+  "강릉",
+  "청주",
+  "천안",
+  "전주",
+  "목포",
+  "안동",
+  "포항",
+  "창원",
+  "진주",
+  "제주",
+] as const;
+
+const birthLocationAliases: Record<string, (typeof supportedBirthLocations)[number]> = {
+  서울: "서울",
+  부산: "부산",
+  대구: "대구",
+  인천: "인천",
+  광주: "광주",
+  대전: "대전",
+  울산: "울산",
+  세종: "세종",
+  수원: "수원",
+  춘천: "춘천",
+  강릉: "강릉",
+  청주: "청주",
+  천안: "천안",
+  전주: "전주",
+  목포: "목포",
+  안동: "안동",
+  포항: "포항",
+  창원: "창원",
+  진주: "진주",
+  제주: "제주",
+};
+
+const PROFILE_SELECTION_PREFIX = "__LUMO_PROFILE_SELECTION__:";
+
+export function normalizeBirthLocationToken(value: string): string {
+  const normalizedValue = value
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/(특별자치도|특별자치시|특별시|광역시|자치시|시)$/u, "");
+
+  return birthLocationAliases[normalizedValue] ?? "";
+}
+
+export function normalizeProfileSelection(profiles: string[]): string[] {
+  return Array.from(
+    new Set(profiles.map((profile) => profile.trim()).filter((profile) => profile.length > 0)),
+  ).slice(0, 2);
+}
+
+export function serializeProfileSelection(profiles: string[]): string {
+  const normalizedProfiles = normalizeProfileSelection(profiles);
+
+  if (normalizedProfiles.length === 0) {
+    return "";
+  }
+
+  if (normalizedProfiles.length === 1) {
+    return normalizedProfiles[0] ?? "";
+  }
+
+  return `${PROFILE_SELECTION_PREFIX}${JSON.stringify(normalizedProfiles)}`;
+}
+
+export function parseProfileSelection(profileValue: string): string[] {
+  const normalizedProfileValue = profileValue.trim();
+
+  if (!normalizedProfileValue) {
+    return [];
+  }
+
+  if (!normalizedProfileValue.startsWith(PROFILE_SELECTION_PREFIX)) {
+    return [normalizedProfileValue];
+  }
+
+  try {
+    const parsedProfiles = JSON.parse(
+      normalizedProfileValue.slice(PROFILE_SELECTION_PREFIX.length),
+    ) as unknown;
+
+    if (!Array.isArray(parsedProfiles)) {
+      return [];
+    }
+
+    return normalizeProfileSelection(
+      parsedProfiles.filter((profile) => typeof profile === "string"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function getPrimarySelectedProfile(profileValue: string): string {
+  return parseProfileSelection(profileValue)[0] ?? "";
+}
+
+export function replaceProfileInSelection(
+  selectionValue: string,
+  previousProfile: string,
+  nextProfile: string,
+): string {
+  const nextProfiles = parseProfileSelection(selectionValue).map((profile) =>
+    profile === previousProfile ? nextProfile : profile,
+  );
+
+  return serializeProfileSelection(nextProfiles);
+}
 
 function normalizeGenderToken(value: string): ChatProfileFields["gender"] {
   if (value.startsWith("여")) {
@@ -70,9 +193,12 @@ function normalizeTimeToken(value: string): string {
 }
 
 export function serializeChatProfile(fields: ChatProfileFields): string {
+  const normalizedLocation = normalizeBirthLocationToken(fields.location);
+
   return [
     `이름:${fields.name.trim() || "미입력"}`,
     `생년월일:${fields.birthDate || "미입력"}`,
+    `출생지:${normalizedLocation || "미입력"}`,
     `성별:${fields.gender || "미입력"}`,
     `달력:${fields.calendarType || "미입력"}`,
     `출생시각:${fields.birthTimeKnown ? fields.birthTime || "미입력" : "모름"}`,
@@ -80,11 +206,18 @@ export function serializeChatProfile(fields: ChatProfileFields): string {
 }
 
 export function isChatProfileComplete(fields: ChatProfileFields): boolean {
-  return Boolean(fields.birthDate && fields.gender && fields.calendarType);
+  const hasRequiredFields =
+    fields.birthDate &&
+    normalizeBirthLocationToken(fields.location) &&
+    fields.gender &&
+    fields.calendarType;
+
+  return Boolean(hasRequiredFields);
 }
 
 export function parseChatProfile(profile: string): ChatProfileFields {
-  const normalizedProfile = profile.replace(/\s+/g, " ").trim();
+  const primaryProfile = getPrimarySelectedProfile(profile);
+  const normalizedProfile = (primaryProfile || profile).replace(/\s+/g, " ").trim();
 
   if (normalizedProfile.includes("이름:") || normalizedProfile.includes("생년월일:")) {
     const name = normalizedProfile.match(/이름\s*:\s*([^|]+)/)?.[1]?.trim() ?? "";
@@ -92,6 +225,10 @@ export function parseChatProfile(profile: string): ChatProfileFields {
       normalizeDateToken(
         normalizedProfile.match(/생년월일\s*:\s*([^|]+)/)?.[1]?.trim() ?? "",
       ) || defaultChatProfileFields.birthDate;
+    const location =
+      normalizeBirthLocationToken(
+        normalizedProfile.match(/출생지\s*:\s*([^|]+)/)?.[1]?.trim() ?? "",
+      ) || defaultChatProfileFields.location;
     const genderToken =
       normalizedProfile.match(/성별\s*:\s*([^|]+)/)?.[1]?.trim() ??
       defaultChatProfileFields.gender;
@@ -106,6 +243,7 @@ export function parseChatProfile(profile: string): ChatProfileFields {
     return {
       name: name === "미입력" ? "" : name,
       birthDate,
+      location,
       gender: normalizeGenderToken(genderToken),
       calendarType: ["양력", "음력"].includes(calendarToken)
         ? (calendarToken as ChatProfileFields["calendarType"])
@@ -118,12 +256,14 @@ export function parseChatProfile(profile: string): ChatProfileFields {
   }
 
   const legacyDate = normalizeDateToken(normalizedProfile);
+  const legacyLocation = normalizeBirthLocationToken(normalizedProfile);
   const genderMatch = normalizedProfile.match(/(남자|여자|남|여)/)?.[1] ?? "";
   const timeMatch = normalizeTimeToken(normalizedProfile);
 
   return {
     ...defaultChatProfileFields,
     birthDate: legacyDate || defaultChatProfileFields.birthDate,
+    location: legacyLocation || defaultChatProfileFields.location,
     gender: normalizeGenderToken(genderMatch),
     birthTimeKnown: Boolean(timeMatch),
     birthTime: timeMatch || defaultChatProfileFields.birthTime,
@@ -131,15 +271,40 @@ export function parseChatProfile(profile: string): ChatProfileFields {
 }
 
 export function hasStoredChatProfile(profile: string): boolean {
-  return isChatProfileComplete(parseChatProfile(profile));
+  const selectedProfiles = parseProfileSelection(profile);
+
+  return (
+    selectedProfiles.length > 0 &&
+    selectedProfiles.every((selectedProfile) =>
+      isChatProfileComplete(parseChatProfile(selectedProfile)),
+    )
+  );
 }
 
 export function summarizeChatProfile(fields: ChatProfileFields): string {
   const dateText = fields.birthDate ? fields.birthDate.replace(/-/g, ".") : "생년월일 미입력";
+  const locationText = normalizeBirthLocationToken(fields.location) || "출생지 미입력";
   const timeText = fields.birthTimeKnown ? fields.birthTime : "시각 모름";
   const nameText = fields.name.trim() || "이름 미입력";
   const genderText = fields.gender || "성별 미입력";
   const calendarText = fields.calendarType || "달력 미입력";
 
-  return `${nameText} · ${dateText} · ${genderText} · ${calendarText} · ${timeText}`;
+  return `${nameText} · ${dateText} · ${locationText} · ${genderText} · ${calendarText} · ${timeText}`;
+}
+
+export function summarizeProfileSelection(profileValue: string): string {
+  const selectedProfiles = parseProfileSelection(profileValue);
+
+  if (selectedProfiles.length === 0) {
+    return "프로필 미선택";
+  }
+
+  if (selectedProfiles.length === 1) {
+    return summarizeChatProfile(parseChatProfile(selectedProfiles[0] ?? ""));
+  }
+
+  return selectedProfiles
+    .map((profile) => parseChatProfile(profile))
+    .map((fields) => fields.name.trim() || `${fields.location || "미입력"} 프로필`)
+    .join(" + ");
 }

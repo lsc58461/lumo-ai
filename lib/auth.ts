@@ -33,6 +33,7 @@ interface StoredAccountProfile {
 interface StoredUserProfileDocument {
   userId: string;
   activeProfile?: string;
+  activeProfiles?: string[];
   profiles?: string[];
   name?: string | null;
   image?: string | null;
@@ -124,6 +125,7 @@ async function syncUserProfileDocument(
       },
       $setOnInsert: {
         activeProfile: "",
+        activeProfiles: [],
         profiles: [],
       },
     },

@@ -8,8 +8,7 @@ import {
 } from "@/lib/lumo-content";
 
 export const defaultChatProfile = "";
-export const defaultChatQuestion =
-  "내 사주를 바탕으로 올해 어디에 에너지를 집중해야 하는지 정리해줘.";
+export const defaultChatQuestion = "";
 
 export function createClientSafeId(prefix: string): string {
   const randomPart = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(16).slice(2);
@@ -25,6 +24,7 @@ export function createChatMessage(
     id?: string;
     pending?: boolean;
     toolResults?: ToolExecutionResult[];
+    followUpSuggestions?: string[];
   },
 ): ChatMessage {
   return {
@@ -34,6 +34,7 @@ export function createChatMessage(
     createdAt: options?.createdAt ?? new Date().toISOString(),
     pending: options?.pending ?? false,
     toolResults: options?.toolResults,
+    followUpSuggestions: options?.followUpSuggestions,
   };
 }
 
