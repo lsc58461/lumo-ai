@@ -61,9 +61,8 @@ interface ConversationSessionDocument {
 
 interface UserProfileDocument {
   userId: string;
-  activeProfile: string;
-  activeProfiles?: string[];
-  profiles: string[];
+  activeProfileId?: string;
+  activeProfileIds?: string[];
   name?: string | null;
   image?: string | null;
   updatedAt: string;
@@ -207,7 +206,9 @@ function isChatMessageArray(value: unknown): value is ChatRequestPayload["messag
         (message.role === "user" || message.role === "assistant" || message.role === "tool") &&
         "content" in message &&
         typeof message.content === "string" &&
-        (!("toolResults" in message) || Array.isArray(message.toolResults)),
+        (!("toolResults" in message) ||
+          message.toolResults === null ||
+          Array.isArray(message.toolResults)),
     )
   );
 }
@@ -350,24 +351,18 @@ async function persistConversation(
 
   try {
     const database = await getMongoDatabase();
-    const selectedProfiles = parseProfileSelection(body.profile);
-    const primaryProfile = selectedProfiles[0] ?? body.profile;
-
     await database.collection<UserProfileDocument>("userProfiles").updateOne(
       { userId },
       {
         $set: {
           userId,
-          activeProfile: primaryProfile,
-          activeProfiles: selectedProfiles.length > 0 ? selectedProfiles : [primaryProfile],
           name: userName,
           image: userImage,
           updatedAt: new Date().toISOString(),
         },
-        $addToSet: {
-          profiles: {
-            $each: selectedProfiles.length > 0 ? selectedProfiles : [primaryProfile],
-          },
+        $setOnInsert: {
+          activeProfileId: "",
+          activeProfileIds: [],
         },
       },
       { upsert: true },
@@ -721,7 +716,7 @@ export async function POST(request: Request) {
         role: message.role,
         content: message.content,
         createdAt: message.createdAt,
-        toolResults: message.toolResults,
+        toolResults: Array.isArray(message.toolResults) ? message.toolResults : undefined,
       }));
 
     const encoder = new TextEncoder();

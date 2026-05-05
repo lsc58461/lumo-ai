@@ -1,6 +1,7 @@
 "use client";
 
 import { CirclePlus, Clock3, Search, Trash2 } from "lucide-react";
+import Image from "next/image";
 import type { Session } from "next-auth";
 import { useMemo, useState } from "react";
 
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/sidebar";
 import type { ConversationPreview } from "@/lib/lumo-content";
 import { cn } from "@/lib/utils";
+import LumoLogoImage from "@/public/lumo-ai-symbol-logo.png";
 
 interface SidebarProps {
   activeConversationId: string;
@@ -89,7 +91,7 @@ function Sidebar({
                 <SidebarMenuButton
                   type="button"
                   isActive={isActive}
-                  className="h-auto min-w-0 flex-1 p-0 text-left hover:bg-transparent"
+                  className="h-auto min-w-0 flex-1 bg-transparent! p-0 text-left"
                   onClick={() => {
                     onSelectConversation(conversation.id);
                   }}
@@ -123,34 +125,25 @@ function Sidebar({
       className="border-sidebar-border/60 text-sidebar-foreground bg-transparent"
     >
       <SidebarHeader className="gap-3 p-3 pt-4">
-        <div className="flex items-center justify-between gap-3 rounded-[28px] border border-white/10 bg-white/5 p-3 shadow-2xl shadow-black/15 backdrop-blur-2xl">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="font-display flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-white/8 text-lg font-semibold text-white shadow-lg shadow-black/20">
-              L
-            </div>
-            <div className="min-w-0">
-              <Badge
-                variant="outline"
-                className="border-cyan-300/15 bg-cyan-300/10 text-[10px] tracking-[0.24em] text-cyan-100 uppercase"
-              >
-                Lumo AI
-              </Badge>
-              <div className="mt-2 text-sm font-medium text-zinc-200">
-                운명을 비추는 사주 채팅
-              </div>
+        <div className="flex items-center gap-3 rounded-[28px] border border-white/10 bg-white/5 p-3 shadow-2xl shadow-black/15 backdrop-blur-2xl">
+          <Image
+            src={LumoLogoImage}
+            width={72}
+            height={72}
+            alt="Lumo AI Logo"
+            className="rounded-2xl"
+          />
+          <div className="min-w-0">
+            <Badge
+              variant="outline"
+              className="border-cyan-300/15 bg-cyan-300/10 text-[10px] tracking-[0.24em] text-cyan-100 uppercase"
+            >
+              Lumo AI
+            </Badge>
+            <div className="mt-2 text-sm font-medium text-zinc-200">
+              운명을 비추는 사주 채팅
             </div>
           </div>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="rounded-2xl border border-white/10 bg-white/4 text-zinc-200 hover:bg-white/8 hover:text-white"
-            aria-label="새 채팅"
-            onClick={onNewChat}
-          >
-            <CirclePlus className="size-4" />
-          </Button>
         </div>
 
         <Button

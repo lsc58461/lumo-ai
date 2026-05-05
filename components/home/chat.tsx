@@ -67,12 +67,13 @@ import {
   hasStoredChatProfile,
   isChatProfileComplete,
   parseChatProfile,
-  parseProfileSelection,
+  resolveSavedProfileValues,
   serializeChatProfile,
   serializeProfileSelection,
   supportedBirthLocations,
   summarizeChatProfile,
   type ChatProfileFields,
+  type SavedProfileRecord,
 } from "@/lib/profile";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat-store";
@@ -81,6 +82,108 @@ const profileDropdownTriggerClassName =
   "h-12 w-full justify-between rounded-2xl border-white/10 bg-black/20 px-4 text-zinc-100 hover:bg-white/8 hover:text-white";
 const selectedProfileButtonClassName =
   "border-cyan-300/45 bg-cyan-400/12 text-zinc-50 font-semibold shadow-[0_0_0_1px_rgba(103,232,249,0.18)]";
+const kakaoJavascriptKey = process.env.NEXT_PUBLIC_KAKAO_JAVASCRIPT_KEY;
+
+interface KakaoShareLink {
+  mobileWebUrl?: string;
+  webUrl?: string;
+}
+
+interface KakaoShareButton {
+  title: string;
+  link: KakaoShareLink;
+}
+
+interface KakaoSharePayload {
+  objectType: "text";
+  text: string;
+  link: KakaoShareLink;
+  buttons?: KakaoShareButton[];
+}
+
+interface KakaoSdk {
+  isInitialized(): boolean;
+  init(appKey: string): void;
+  Share: {
+    sendDefault(payload: KakaoSharePayload): void;
+  };
+}
+
+declare global {
+  interface Window {
+    Kakao?: KakaoSdk;
+  }
+}
+
+let kakaoSdkLoadPromise: Promise<KakaoSdk | null> | null = null;
+
+async function ensureKakaoSdk(): Promise<KakaoSdk | null> {
+  if (!kakaoJavascriptKey || typeof window === "undefined") {
+    return null;
+  }
+
+  if (window.Kakao) {
+    if (!window.Kakao.isInitialized()) {
+      window.Kakao.init(kakaoJavascriptKey);
+    }
+
+    return window.Kakao;
+  }
+
+  if (!kakaoSdkLoadPromise) {
+    kakaoSdkLoadPromise = new Promise<KakaoSdk | null>((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        'script[data-kakao-sdk="true"]',
+      );
+
+      const initializeKakao = () => {
+        if (!window.Kakao) {
+          reject(new Error("카카오 SDK를 불러오지 못했습니다."));
+          return;
+        }
+
+        if (!window.Kakao.isInitialized()) {
+          window.Kakao.init(kakaoJavascriptKey);
+        }
+
+        resolve(window.Kakao);
+      };
+
+      if (existingScript) {
+        existingScript.addEventListener("load", initializeKakao, { once: true });
+        existingScript.addEventListener(
+          "error",
+          () => {
+            reject(new Error("카카오 SDK 스크립트를 불러오지 못했습니다."));
+          },
+          { once: true },
+        );
+
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.5/kakao.min.js";
+      script.async = true;
+      script.crossOrigin = "anonymous";
+      script.dataset.kakaoSdk = "true";
+      script.addEventListener("load", initializeKakao, { once: true });
+      script.addEventListener(
+        "error",
+        () => {
+          reject(new Error("카카오 SDK 스크립트를 불러오지 못했습니다."));
+        },
+        { once: true },
+      );
+      document.head.append(script);
+    }).catch((error: unknown) => {
+      kakaoSdkLoadPromise = null;
+      throw error;
+    });
+  }
+
+  return kakaoSdkLoadPromise;
+}
 
 interface ProfileDropdownFieldProps {
   label: string;
@@ -251,7 +354,7 @@ export interface ChatComposerDraft {
 
 interface ChatProps {
   activeConversation: ConversationSession;
-  availableProfiles: string[];
+  availableProfiles: SavedProfileRecord[];
   featuredPrompts: PromptTemplate[];
   initialProfile: string;
   isAuthenticated: boolean;
@@ -259,15 +362,16 @@ interface ChatProps {
   kakaoReady: boolean;
   isSending: boolean;
   requestError: string;
+  selectedProfileIds: string[];
   onCreateShareLink: (conversationId: string) => Promise<string>;
-  onDeleteProfile: (profile: string) => Promise<string>;
+  onDeleteProfile: (profileId: string) => Promise<string>;
   onRequestLogin: () => void;
   onSaveProfile: (
     profile: string,
-    previousProfile?: string,
-    currentSelection?: string[],
+    profileId?: string,
+    currentSelectionIds?: string[],
   ) => Promise<string>;
-  onSelectSavedProfile: (profiles: string[]) => void;
+  onSelectSavedProfile: (profileIds: string[]) => void;
   onSubmit: (draft: ChatComposerDraft) => Promise<void>;
   onFollowUpSelect: (question: string) => Promise<void>;
 }
@@ -282,6 +386,7 @@ function Chat({
   kakaoReady,
   isSending,
   requestError,
+  selectedProfileIds,
   onCreateShareLink,
   onDeleteProfile,
   onRequestLogin,
@@ -330,7 +435,6 @@ function Chat({
   const activeConversationTools = activeConversation.tools;
   const selectedTone =
     toneOptions.find((toneOption) => toneOption.id === selectedToneId) ?? toneOptions[0];
-  const selectedProfileValues = useMemo(() => parseProfileSelection(profile), [profile]);
   const locationOptions = useMemo(
     () => supportedBirthLocations.map((location) => ({ value: location, label: location })),
     [],
@@ -352,8 +456,9 @@ function Chat({
   const savedProfileOptions = useMemo(
     () =>
       availableProfiles.map((savedProfile) => ({
-        value: savedProfile,
-        summary: summarizeChatProfile(parseChatProfile(savedProfile)),
+        id: savedProfile.id,
+        value: savedProfile.value,
+        summary: summarizeChatProfile(parseChatProfile(savedProfile.value)),
       })),
     [availableProfiles],
   );
@@ -367,7 +472,7 @@ function Chat({
   const [isDeletingProfile, setIsDeletingProfile] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileDraft, setProfileDraft] = useState<ChatProfileFields>(defaultChatProfileFields);
-  const [editingProfileValue, setEditingProfileValue] = useState<string | null>(null);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [shareError, setShareError] = useState("");
   const [shareUrl, setShareUrl] = useState("");
   const [messageScrollContainer, setMessageScrollContainer] = useState<HTMLDivElement | null>(
@@ -523,17 +628,48 @@ function Chat({
     await navigator.clipboard.writeText(shareUrl);
   }, [shareUrl]);
 
-  const handleShareToKakao = useCallback((): void => {
+  const handleShareToKakao = useCallback(async (): Promise<void> => {
     if (!shareUrl) {
       return;
     }
 
-    window.open(
-      `https://sharer.kakao.com/talk/friends/picker/link?url=${encodeURIComponent(shareUrl)}`,
-      "_blank",
-      "noopener,noreferrer",
-    );
-  }, [shareUrl]);
+    const fallbackToSharer = () => {
+      window.open(
+        `https://sharer.kakao.com/talk/friends/picker/link?url=${encodeURIComponent(shareUrl)}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    };
+
+    try {
+      const kakao = await ensureKakaoSdk();
+
+      if (!kakao) {
+        fallbackToSharer();
+        return;
+      }
+
+      kakao.Share.sendDefault({
+        objectType: "text",
+        text: `${activeConversation.title}\n\n루모 AI 대화를 확인해 보세요.`,
+        link: {
+          mobileWebUrl: shareUrl,
+          webUrl: shareUrl,
+        },
+        buttons: [
+          {
+            title: "대화 보기",
+            link: {
+              mobileWebUrl: shareUrl,
+              webUrl: shareUrl,
+            },
+          },
+        ],
+      });
+    } catch {
+      fallbackToSharer();
+    }
+  }, [activeConversation.title, shareUrl]);
 
   const handleSaveProfile = useCallback(async (): Promise<void> => {
     setIsSavingProfile(true);
@@ -542,22 +678,22 @@ function Chat({
       const serializedProfile = serializeChatProfile(profileDraft);
       const nextSelectionValue = await onSaveProfile(
         serializedProfile,
-        editingProfileValue ?? undefined,
-        selectedProfileValues,
+        editingProfileId ?? undefined,
+        selectedProfileIds,
       );
 
       setProfile(nextSelectionValue || serializedProfile);
-      setEditingProfileValue(null);
+      setEditingProfileId(null);
       setProfileDraft(defaultChatProfileFields);
       setIsAddingProfile(false);
     } finally {
       setIsSavingProfile(false);
     }
-  }, [editingProfileValue, onSaveProfile, profileDraft, selectedProfileValues, setProfile]);
+  }, [editingProfileId, onSaveProfile, profileDraft, selectedProfileIds, setProfile]);
 
   const handleOpenProfileDialog = useCallback(
     (showAddForm = false): void => {
-      setEditingProfileValue(null);
+      setEditingProfileId(null);
       setProfileDraft(parseChatProfile(getPrimarySelectedProfile(profile)));
       setIsAddingProfile(showAddForm || savedProfileOptions.length === 0);
       setIsProfileDialogOpen(true);
@@ -566,44 +702,58 @@ function Chat({
   );
 
   const handleToggleSavedProfile = useCallback(
-    (nextProfile: string): void => {
-      const isSelected = selectedProfileValues.includes(nextProfile);
-      let nextSelectedProfiles = selectedProfileValues;
+    (nextProfileId: string): void => {
+      const isSelected = selectedProfileIds.includes(nextProfileId);
+      let nextSelectedProfileIds = selectedProfileIds;
 
       if (isSelected) {
-        nextSelectedProfiles = selectedProfileValues.filter(
-          (selectedProfile) => selectedProfile !== nextProfile,
+        nextSelectedProfileIds = selectedProfileIds.filter(
+          (selectedProfileId) => selectedProfileId !== nextProfileId,
         );
-      } else if (selectedProfileValues.length < 2) {
-        nextSelectedProfiles = [...selectedProfileValues, nextProfile];
+      } else if (selectedProfileIds.length < 2) {
+        nextSelectedProfileIds = [...selectedProfileIds, nextProfileId];
       }
+
+      const nextSelectedProfiles = resolveSavedProfileValues(
+        availableProfiles,
+        nextSelectedProfileIds,
+      );
 
       const nextSelectionValue = serializeProfileSelection(nextSelectedProfiles);
 
       setProfile(nextSelectionValue);
-      setProfileDraft(parseChatProfile(nextSelectedProfiles[0] ?? nextProfile));
-      onSelectSavedProfile(nextSelectedProfiles);
+      setProfileDraft(parseChatProfile(nextSelectedProfiles[0] ?? ""));
+      onSelectSavedProfile(nextSelectedProfileIds);
     },
-    [onSelectSavedProfile, selectedProfileValues, setProfile],
+    [availableProfiles, onSelectSavedProfile, selectedProfileIds, setProfile],
   );
 
-  const handleEditSavedProfile = useCallback((savedProfile: string): void => {
-    setEditingProfileValue(savedProfile);
-    setProfileDraft(parseChatProfile(savedProfile));
-    setIsAddingProfile(true);
-  }, []);
+  const handleEditSavedProfile = useCallback(
+    (savedProfileId: string): void => {
+      const savedProfile = savedProfileOptions.find((option) => option.id === savedProfileId);
+
+      if (!savedProfile) {
+        return;
+      }
+
+      setEditingProfileId(savedProfileId);
+      setProfileDraft(parseChatProfile(savedProfile.value));
+      setIsAddingProfile(true);
+    },
+    [savedProfileOptions],
+  );
 
   const handleDeleteSavedProfile = useCallback(
-    async (savedProfile: string): Promise<void> => {
+    async (savedProfileId: string): Promise<void> => {
       setIsDeletingProfile(true);
 
       try {
-        const nextSelectionValue = await onDeleteProfile(savedProfile);
+        const nextSelectionValue = await onDeleteProfile(savedProfileId);
 
         setProfile(nextSelectionValue);
 
-        if (editingProfileValue === savedProfile) {
-          setEditingProfileValue(null);
+        if (editingProfileId === savedProfileId) {
+          setEditingProfileId(null);
           setProfileDraft(defaultChatProfileFields);
           setIsAddingProfile(false);
         }
@@ -612,7 +762,7 @@ function Chat({
         setPendingDeleteProfileValue(null);
       }
     },
-    [editingProfileValue, onDeleteProfile, setProfile],
+    [editingProfileId, onDeleteProfile, setProfile],
   );
 
   const handleSubmit = useCallback(async (): Promise<void> => {
@@ -736,7 +886,7 @@ function Chat({
               >
                 {message.content}
               </Streamdown>
-              {message.followUpSuggestions?.length ? (
+              {!isReadOnly && message.followUpSuggestions?.length ? (
                 <div className="flex flex-wrap gap-2">
                   {message.followUpSuggestions.slice(0, 3).map((suggestion) => (
                     <button
@@ -762,7 +912,7 @@ function Chat({
         </article>
       );
     },
-    [isSending, onFollowUpSelect],
+    [isReadOnly, isSending, onFollowUpSelect],
   );
 
   return (
@@ -783,7 +933,7 @@ function Chat({
         </Button>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden px-4 py-4 md:px-6 md:py-6">
+      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {hasMessages ? (
             <div
@@ -846,7 +996,7 @@ function Chat({
           ) : (
             <div
               ref={setEmptyStateScrollContainer}
-              className="flex h-full min-h-0 w-full min-w-0 flex-col items-center justify-start overflow-y-auto rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)] px-5 py-7 text-center md:justify-center md:py-8"
+              className="flex h-full min-h-0 w-full min-w-0 flex-col items-center justify-start overflow-y-auto rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)] px-3 py-5 text-center md:justify-center md:py-8"
             >
               <Badge
                 variant="outline"
@@ -854,12 +1004,12 @@ function Chat({
               >
                 <MessageSquareText className="size-4" />한 줄 질문으로 바로 시작
               </Badge>
-              <h1 className="font-display mt-6 text-4xl leading-[0.98] tracking-tight text-white sm:text-5xl xl:text-6xl">
+              <h1 className="font-display mt-6 text-3xl leading-[0.98] tracking-tight text-white sm:text-4xl xl:text-5xl">
                 루모 AI에게
                 <br />
                 오늘의 흐름을 물어보세요.
               </h1>
-              <p className="mt-4 max-w-xl text-sm leading-7 text-zinc-400 sm:text-base sm:leading-8">
+              <p className="mt-4 max-w-xl text-xs leading-5 text-zinc-500 sm:text-base sm:leading-6">
                 호흡은 간결하게, 해석은 또렷하게. 연애, 진로, 궁합, 재물처럼 지금 마음에 걸린
                 질문을 채팅으로 이어가세요.
               </p>
@@ -874,13 +1024,13 @@ function Chat({
                       applyPrompt(prompt);
                     }}
                   >
-                    <span className="text-[11px] font-semibold tracking-[0.22em] text-zinc-500 uppercase">
+                    <span className="text-xs font-semibold tracking-[0.22em] text-zinc-500 uppercase">
                       {prompt.category}
                     </span>
-                    <strong className="mt-3 block text-base font-semibold text-white">
+                    <strong className="mt-2 block text-base font-semibold text-white">
                       {prompt.title}
                     </strong>
-                    <span className="mt-2 block text-sm leading-6 text-zinc-400">
+                    <span className="mt-1 block text-sm leading-6 text-zinc-400">
                       {prompt.summary}
                     </span>
                   </button>
@@ -912,7 +1062,7 @@ function Chat({
             </CardContent>
           </Card>
         ) : (
-          <Card className="relative shrink-0 rounded-[28px] border border-white/10 bg-white/5 py-0 shadow-lg shadow-black/10 backdrop-blur-xl">
+          <Card className="relative mx-2 mb-2 shrink-0 rounded-[28px] border border-white/10 bg-white/5 py-0 shadow-lg shadow-black/10 backdrop-blur-xl">
             {showScrollToBottomButton && activeScrollContainer ? (
               <div className="pointer-events-none absolute inset-x-0 -top-18 z-20 flex justify-center">
                 <Button
@@ -931,7 +1081,7 @@ function Chat({
               <div className="relative">
                 <Textarea
                   aria-label="채팅 질문 입력"
-                  className="min-h-18 resize-none rounded-[18px] border border-white/10 bg-[#12141d] px-3 pt-2 pb-12 text-[14px] leading-6 text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-0 focus-visible:ring-offset-0 md:min-h-20 md:rounded-[22px] md:px-4 md:pt-3 md:pb-12 md:text-[15px]"
+                  className="field-sizing-fixed h-18 max-h-18 resize-none overflow-y-auto rounded-[18px] border border-white/10 bg-[#12141d] px-3 pt-2 pr-10 pb-12 text-[14px] leading-6 text-zinc-100 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-zinc-500 focus-visible:ring-0 focus-visible:ring-offset-0 md:h-20 md:max-h-20 md:rounded-[22px] md:px-4 md:pt-3 md:pb-12 md:text-[15px] [&::-webkit-scrollbar]:hidden"
                   rows={2}
                   maxLength={140}
                   value={question}
@@ -942,7 +1092,7 @@ function Chat({
                     hasMessages ? "이어서 더 물어보세요..." : "메시지를 입력하세요..."
                   }
                 />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between px-3 pb-3 md:px-4">
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-end justify-end gap-1 px-3 pb-3 md:px-4">
                   <div className="text-[11px] text-zinc-500 tabular-nums md:text-xs">
                     {remainingCharacters} / 140
                   </div>
@@ -1023,7 +1173,7 @@ function Chat({
                     }}
                   >
                     <UserRound className="size-4" />
-                    프로필 + {selectedProfileValues.length}
+                    프로필 + {selectedProfileIds.length}
                   </Button>
 
                   <DropdownMenu>
@@ -1082,7 +1232,7 @@ function Chat({
 
             if (!open) {
               setIsAddingProfile(false);
-              setEditingProfileValue(null);
+              setEditingProfileId(null);
             }
           }}
         >
@@ -1103,29 +1253,29 @@ function Chat({
                   <div className="grid gap-1.5">
                     {savedProfileOptions.map((savedProfileOption) => (
                       <div
-                        key={savedProfileOption.value}
+                        key={savedProfileOption.id}
                         className="flex min-w-0 items-stretch gap-1.5"
                       >
                         <Button
                           type="button"
                           variant="outline"
                           disabled={
-                            !selectedProfileValues.includes(savedProfileOption.value) &&
-                            selectedProfileValues.length >= 2
+                            !selectedProfileIds.includes(savedProfileOption.id) &&
+                            selectedProfileIds.length >= 2
                           }
                           className={cn(
                             "h-auto min-h-11 min-w-0 flex-1 justify-between rounded-[18px] border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-zinc-100 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50",
-                            selectedProfileValues.includes(savedProfileOption.value) &&
+                            selectedProfileIds.includes(savedProfileOption.id) &&
                               "border-cyan-300/40 bg-cyan-400/10 text-zinc-50 shadow-[0_0_0_1px_rgba(103,232,249,0.15)]",
                           )}
                           onClick={() => {
-                            handleToggleSavedProfile(savedProfileOption.value);
+                            handleToggleSavedProfile(savedProfileOption.id);
                           }}
                         >
                           <span className="block min-w-0 flex-1 truncate leading-5">
                             {savedProfileOption.summary}
                           </span>
-                          {selectedProfileValues.includes(savedProfileOption.value) ? (
+                          {selectedProfileIds.includes(savedProfileOption.id) ? (
                             <Check className="ml-2 size-4 shrink-0 text-cyan-100" />
                           ) : null}
                         </Button>
@@ -1135,7 +1285,7 @@ function Chat({
                           className="h-auto shrink-0 rounded-[18px] border-white/10 bg-black/20 px-2.5 text-xs text-zinc-300 hover:bg-white/8 hover:text-white"
                           aria-label="프로필 수정"
                           onClick={() => {
-                            handleEditSavedProfile(savedProfileOption.value);
+                            handleEditSavedProfile(savedProfileOption.id);
                           }}
                         >
                           <Pencil className="size-4" />
@@ -1148,7 +1298,7 @@ function Chat({
                           className="h-auto shrink-0 rounded-[18px] border-white/10 bg-black/20 px-2.5 text-xs text-zinc-300 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label="프로필 삭제"
                           onClick={() => {
-                            setPendingDeleteProfileValue(savedProfileOption.value);
+                            setPendingDeleteProfileValue(savedProfileOption.id);
                           }}
                         >
                           <Trash2 className="size-4" />
@@ -1164,7 +1314,7 @@ function Chat({
                     type="button"
                     className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
                     onClick={() => {
-                      setEditingProfileValue(null);
+                      setEditingProfileId(null);
                       setProfileDraft(defaultChatProfileFields);
                       setIsAddingProfile(true);
                     }}
@@ -1178,7 +1328,7 @@ function Chat({
                 <div className="space-y-2 sm:col-span-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-medium text-zinc-200">
-                      {editingProfileValue ? "프로필 수정" : "새 프로필 추가"}
+                      {editingProfileId ? "프로필 수정" : "새 프로필 추가"}
                     </div>
                     {savedProfileOptions.length > 0 ? (
                       <Button
@@ -1186,7 +1336,7 @@ function Chat({
                         variant="ghost"
                         className="h-8 rounded-full px-3 text-xs text-zinc-400 hover:bg-white/6 hover:text-white"
                         onClick={() => {
-                          setEditingProfileValue(null);
+                          setEditingProfileId(null);
                           setIsAddingProfile(false);
                           setProfileDraft(parseChatProfile(getPrimarySelectedProfile(profile)));
                         }}

@@ -21,6 +21,7 @@ export default async function Home({ searchParams }: HomePageProps) {
     featuredPrompts,
     conversationSessions,
     initialProfiles,
+    initialActiveProfileIds,
     initialProfile,
     initialUserName,
     initialUserImage,
@@ -46,6 +47,7 @@ export default async function Home({ searchParams }: HomePageProps) {
       featuredPrompts={featuredPrompts}
       initialConversations={conversationSessions}
       initialProfiles={initialProfiles}
+      initialActiveProfileIds={initialActiveProfileIds}
       initialProfile={initialProfile}
       initialSharedConversation={sharedConversation}
       isSharedView={isSharedView}

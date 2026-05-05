@@ -24,15 +24,17 @@ import {
   type PromptTemplate,
 } from "@/lib/lumo-content";
 import {
-  parseProfileSelection,
-  replaceProfileInSelection,
+  normalizeProfileIds,
+  resolveSavedProfileValues,
   serializeProfileSelection,
+  type SavedProfileRecord,
 } from "@/lib/profile";
 
 interface HomeShellProps {
   featuredPrompts: PromptTemplate[];
   initialConversations: ConversationSession[];
-  initialProfiles: string[];
+  initialProfiles: SavedProfileRecord[];
+  initialActiveProfileIds: string[];
   initialProfile: string;
   initialSharedConversation: ConversationSession | null;
   isSharedView: boolean;
@@ -68,6 +70,7 @@ function HomeShell({
   featuredPrompts,
   initialConversations,
   initialProfiles,
+  initialActiveProfileIds,
   initialProfile,
   initialSharedConversation,
   isSharedView,
@@ -77,6 +80,8 @@ function HomeShell({
   const isAuthenticated = Boolean(session?.user);
   const [conversations, setConversations] = useState(initialConversations);
   const [savedProfiles, setSavedProfiles] = useState(initialProfiles);
+  const [selectedSavedProfileIds, setSelectedSavedProfileIds] =
+    useState(initialActiveProfileIds);
   const [defaultProfileValue, setDefaultProfileValue] = useState(initialProfile);
   const [draftConversation, setDraftConversation] = useState(() =>
     createDraftConversation(featuredPrompts, initialProfile),
@@ -280,8 +285,8 @@ function HomeShell({
   const handleSaveProfile = useCallback(
     async (
       profile: string,
-      previousProfile?: string,
-      currentSelection?: string[],
+      profileId?: string,
+      currentSelectionIds?: string[],
     ): Promise<string> => {
       if (!isAuthenticated) {
         setIsLoginModalOpen(true);
@@ -295,55 +300,35 @@ function HomeShell({
         },
         body: JSON.stringify({
           profile,
-          previousProfile,
-          activeProfiles: currentSelection,
+          profileId,
+          activeProfileIds: currentSelectionIds,
         }),
       });
 
       const data = (await response.json()) as {
         error?: string;
-        activeProfile?: string;
-        activeProfiles?: string[];
-        profiles?: string[];
+        activeProfileId?: string;
+        activeProfileIds?: string[];
+        profiles?: SavedProfileRecord[];
       };
 
       if (!response.ok) {
         throw new Error(data.error ?? "프로필 저장에 실패했습니다.");
       }
 
-      const nextActiveProfile = data.activeProfile ?? profile;
-      const nextProfiles = data.profiles ?? [profile];
-      const savedActiveProfiles = parseProfileSelection(
-        serializeProfileSelection(data.activeProfiles ?? []),
+      const nextProfiles = data.profiles ?? [];
+      const nextActiveProfileIds = normalizeProfileIds(
+        data.activeProfileIds ?? (data.activeProfileId ? [data.activeProfileId] : []),
       );
-      const normalizedSelection = currentSelection ?? [];
-      let nextSelectedProfiles = normalizedSelection;
-
-      if (previousProfile) {
-        nextSelectedProfiles = parseProfileSelection(
-          replaceProfileInSelection(
-            serializeProfileSelection(normalizedSelection),
-            previousProfile,
-            profile,
-          ),
-        );
-      } else if (normalizedSelection.includes(profile)) {
-        nextSelectedProfiles = normalizedSelection;
-      } else if (normalizedSelection.length < 2) {
-        nextSelectedProfiles = [...normalizedSelection, profile];
-      } else {
-        nextSelectedProfiles = [normalizedSelection[0] ?? nextActiveProfile, profile];
-      }
-
-      if (savedActiveProfiles.length > 0) {
-        nextSelectedProfiles = savedActiveProfiles;
-      }
+      const nextSelectedProfiles = resolveSavedProfileValues(
+        nextProfiles,
+        nextActiveProfileIds,
+      );
 
       const nextSelectionValue =
-        nextSelectedProfiles.length > 0
-          ? serializeProfileSelection(nextSelectedProfiles)
-          : nextActiveProfile;
+        nextSelectedProfiles.length > 0 ? serializeProfileSelection(nextSelectedProfiles) : "";
 
+      setSelectedSavedProfileIds(nextActiveProfileIds);
       setDefaultProfileValue(nextSelectionValue);
       setSavedProfiles(nextProfiles);
       setDraftConversation((currentConversation) => ({
@@ -357,7 +342,7 @@ function HomeShell({
   );
 
   const handleDeleteProfile = useCallback(
-    async (profile: string): Promise<string> => {
+    async (profileId: string): Promise<string> => {
       if (!isAuthenticated) {
         setIsLoginModalOpen(true);
         return "";
@@ -368,14 +353,14 @@ function HomeShell({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ profile }),
+        body: JSON.stringify({ profileId }),
       });
 
       const data = (await response.json()) as {
         error?: string;
-        activeProfile?: string;
-        activeProfiles?: string[];
-        profiles?: string[];
+        activeProfileId?: string;
+        activeProfileIds?: string[];
+        profiles?: SavedProfileRecord[];
       };
 
       if (!response.ok) {
@@ -383,13 +368,18 @@ function HomeShell({
       }
 
       const nextProfiles = data.profiles ?? [];
-      const nextSelectedProfiles = data.activeProfiles ?? [];
+      const nextActiveProfileIds = normalizeProfileIds(
+        data.activeProfileIds ?? (data.activeProfileId ? [data.activeProfileId] : []),
+      );
+      const nextSelectedProfiles = resolveSavedProfileValues(
+        nextProfiles,
+        nextActiveProfileIds,
+      );
       const nextSelectionValue =
-        nextSelectedProfiles.length > 0
-          ? serializeProfileSelection(nextSelectedProfiles)
-          : (data.activeProfile ?? "");
+        nextSelectedProfiles.length > 0 ? serializeProfileSelection(nextSelectedProfiles) : "";
 
       setSavedProfiles(nextProfiles);
+      setSelectedSavedProfileIds(nextActiveProfileIds);
       setDefaultProfileValue(nextSelectionValue);
       setDraftConversation((currentConversation) => ({
         ...currentConversation,
@@ -402,9 +392,13 @@ function HomeShell({
   );
 
   const handleSelectSavedProfiles = useCallback(
-    (profiles: string[]): void => {
-      const nextSelectionValue = serializeProfileSelection(profiles);
+    (profileIds: string[]): void => {
+      const nextSelectedProfileIds = normalizeProfileIds(profileIds);
+      const nextSelectionValue = serializeProfileSelection(
+        resolveSavedProfileValues(savedProfiles, nextSelectedProfileIds),
+      );
 
+      setSelectedSavedProfileIds(nextSelectedProfileIds);
       setDefaultProfileValue(nextSelectionValue);
       setDraftConversation((currentConversation) => ({
         ...currentConversation,
@@ -421,11 +415,11 @@ function HomeShell({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          activeProfiles: profiles,
+          activeProfileIds: nextSelectedProfileIds,
         }),
       }).catch(() => undefined);
     },
-    [isAuthenticated],
+    [isAuthenticated, savedProfiles],
   );
 
   const handleCreateShareLink = useCallback(async (conversationId: string): Promise<string> => {
@@ -747,7 +741,7 @@ function HomeShell({
             ) : null}
 
             <SidebarInset className="h-full min-h-0 overflow-hidden bg-transparent">
-              <div className="flex h-full min-h-0 w-full px-3 py-3 md:px-4 md:py-4">
+              <div className="flex h-full min-h-0 w-full">
                 <Chat
                   activeConversation={activeConversation}
                   availableProfiles={savedProfiles}
@@ -758,6 +752,7 @@ function HomeShell({
                   kakaoReady={kakaoReady}
                   isSending={isSending}
                   requestError={requestError}
+                  selectedProfileIds={selectedSavedProfileIds}
                   onCreateShareLink={handleCreateShareLink}
                   onDeleteProfile={handleDeleteProfile}
                   onRequestLogin={handleOpenLoginModal}

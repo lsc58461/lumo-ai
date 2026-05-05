@@ -11,7 +11,11 @@ import {
   type PromptTemplate,
 } from "@/lib/lumo-content";
 import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
-import { serializeProfileSelection } from "@/lib/profile";
+import {
+  resolveSavedProfileValues,
+  serializeProfileSelection,
+  type SavedProfileRecord,
+} from "@/lib/profile";
 
 interface PromptTemplateDocument {
   slug: string;
@@ -60,11 +64,18 @@ interface SharedConversationDocument extends ConversationSessionDocument {
 
 interface UserProfileDocument {
   userId: string;
-  activeProfile?: string;
-  activeProfiles?: string[];
-  profiles?: string[];
+  activeProfileId?: string;
+  activeProfileIds?: string[];
   name?: string | null;
   image?: string | null;
+  updatedAt: string | Date;
+}
+
+interface SavedProfileDocument {
+  _id?: ObjectId;
+  userId: string;
+  value: string;
+  createdAt: string | Date;
   updatedAt: string | Date;
 }
 
@@ -122,12 +133,20 @@ function mapConversationSession(document: ConversationSessionDocument): Conversa
   };
 }
 
+function mapSavedProfileRecord(document: SavedProfileDocument): SavedProfileRecord {
+  return {
+    id: document._id?.toString() ?? "",
+    value: document.value,
+  };
+}
+
 export const getHomePageData = cache(async (userId?: string, shareId?: string) => {
   const fallbackData = {
     featuredPrompts: featuredPromptSeeds,
     conversationPreviews: [],
     conversationSessions: [],
-    initialProfiles: [] as string[],
+    initialProfiles: [] as SavedProfileRecord[],
+    initialActiveProfileIds: [] as string[],
     initialProfile: defaultChatProfile,
     initialUserName: undefined as string | undefined,
     initialUserImage: undefined as string | undefined,
@@ -159,6 +178,13 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
     const userProfilePromise = userId
       ? database.collection<UserProfileDocument>("userProfiles").findOne({ userId })
       : Promise.resolve(null);
+    const savedProfilesPromise = userId
+      ? database
+          .collection<SavedProfileDocument>("savedProfiles")
+          .find({ userId })
+          .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+          .toArray()
+      : Promise.resolve([] as SavedProfileDocument[]);
     const userDocumentPromise = userId
       ? database.collection<UserDocument>("users").findOne(buildUserIdQuery(userId))
       : Promise.resolve(null);
@@ -171,12 +197,14 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
       promptDocuments,
       conversationDocuments,
       userProfileDocument,
+      savedProfileDocuments,
       userDocument,
       sharedConversationDocument,
     ] = await Promise.all([
       promptDocumentsPromise,
       conversationDocumentsPromise,
       userProfilePromise,
+      savedProfilesPromise,
       userDocumentPromise,
       sharedConversationPromise,
     ]);
@@ -185,7 +213,12 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
     const mappedSharedConversation = sharedConversationDocument
       ? mapConversationSession(sharedConversationDocument)
       : null;
-    const initialProfiles = userProfileDocument?.profiles ?? [];
+    const initialProfiles = savedProfileDocuments.map(mapSavedProfileRecord);
+    const initialActiveProfileIds = userProfileDocument?.activeProfileIds ?? [];
+    const initialProfileValues = resolveSavedProfileValues(
+      initialProfiles,
+      initialActiveProfileIds,
+    );
 
     return {
       featuredPrompts:
@@ -201,10 +234,8 @@ export const getHomePageData = cache(async (userId?: string, shareId?: string) =
           ? []
           : mappedConversationSessions,
       initialProfiles,
-      initialProfile:
-        serializeProfileSelection(userProfileDocument?.activeProfiles ?? []) ||
-        userProfileDocument?.activeProfile ||
-        defaultChatProfile,
+      initialActiveProfileIds,
+      initialProfile: serializeProfileSelection(initialProfileValues) || defaultChatProfile,
       initialUserName:
         (userProfileDocument?.name ?? userDocument?.name ?? undefined) || undefined,
       initialUserImage:

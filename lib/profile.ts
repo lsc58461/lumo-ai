@@ -66,6 +66,11 @@ const birthLocationAliases: Record<string, (typeof supportedBirthLocations)[numb
 
 const PROFILE_SELECTION_PREFIX = "__LUMO_PROFILE_SELECTION__:";
 
+export interface SavedProfileRecord {
+  id: string;
+  value: string;
+}
+
 export function normalizeBirthLocationToken(value: string): string {
   const normalizedValue = value
     .trim()
@@ -79,6 +84,25 @@ export function normalizeProfileSelection(profiles: string[]): string[] {
   return Array.from(
     new Set(profiles.map((profile) => profile.trim()).filter((profile) => profile.length > 0)),
   ).slice(0, 2);
+}
+
+export function normalizeProfileIds(profileIds: string[]): string[] {
+  return Array.from(
+    new Set(profileIds.map((profileId) => profileId.trim()).filter((profileId) => profileId)),
+  ).slice(0, 2);
+}
+
+export function resolveSavedProfileValues(
+  profiles: SavedProfileRecord[],
+  profileIds: string[],
+): string[] {
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile.value]));
+
+  return normalizeProfileSelection(
+    normalizeProfileIds(profileIds)
+      .map((profileId) => profileById.get(profileId) ?? "")
+      .filter((profile) => profile.length > 0),
+  );
 }
 
 export function serializeProfileSelection(profiles: string[]): string {
