@@ -1,350 +1,27 @@
 "use client";
 
-import { format, parseISO } from "date-fns";
-import { ko } from "date-fns/locale";
-import {
-  ArrowDown,
-  ArrowUp,
-  CalendarIcon,
-  Check,
-  ChevronDown,
-  Clock3,
-  Compass,
-  Copy,
-  Link2,
-  Loader2,
-  MessageCircleMore,
-  MessageSquareText,
-  Paintbrush,
-  Pencil,
-  Share2,
-  Sparkles,
-  Trash2,
-  UserRound,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Streamdown } from "streamdown";
+import { MessageSquareText, Share2, Sparkles } from "lucide-react";
+import { useCallback, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import ToolRunResults from "@/components/home/tool-run-results";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  toolSelectionKeys,
-  toneOptions,
-  toolCatalog,
-  type ConversationSession,
-  type PromptTemplate,
-} from "@/lib/lumo-content";
-import {
-  defaultChatProfileFields,
-  getPrimarySelectedProfile,
-  hasStoredChatProfile,
-  isChatProfileComplete,
-  parseChatProfile,
-  resolveSavedProfileValues,
-  serializeChatProfile,
-  serializeProfileSelection,
-  supportedBirthLocations,
-  summarizeChatProfile,
-  type ChatProfileFields,
-  type SavedProfileRecord,
-} from "@/lib/profile";
+import { toneOptions, type ConversationSession, type PromptTemplate } from "@/lib/lumo-content";
+import { hasStoredChatProfile, type SavedProfileRecord } from "@/lib/profile";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat-store";
 
-const profileDropdownTriggerClassName =
-  "h-12 w-full justify-between rounded-2xl border-white/10 bg-black/20 px-4 text-zinc-100 hover:bg-white/8 hover:text-white";
-const selectedProfileButtonClassName =
-  "border-cyan-300/45 bg-cyan-400/12 text-zinc-50 font-semibold shadow-[0_0_0_1px_rgba(103,232,249,0.18)]";
-const kakaoJavascriptKey = process.env.NEXT_PUBLIC_KAKAO_JAVASCRIPT_KEY;
+import { useChatProfileState } from "../../hooks/use-chat-profile-state";
+import { useChatShareState, useChatViewState } from "../../hooks/use-chat-share-state";
 
-interface KakaoShareLink {
-  mobileWebUrl?: string;
-  webUrl?: string;
-}
-
-interface KakaoShareButton {
-  title: string;
-  link: KakaoShareLink;
-}
-
-interface KakaoSharePayload {
-  objectType: "text";
-  text: string;
-  link: KakaoShareLink;
-  buttons?: KakaoShareButton[];
-}
-
-interface KakaoSdk {
-  isInitialized(): boolean;
-  init(appKey: string): void;
-  Share: {
-    sendDefault(payload: KakaoSharePayload): void;
-  };
-}
-
-declare global {
-  interface Window {
-    Kakao?: KakaoSdk;
-  }
-}
-
-let kakaoSdkLoadPromise: Promise<KakaoSdk | null> | null = null;
-
-async function ensureKakaoSdk(): Promise<KakaoSdk | null> {
-  if (!kakaoJavascriptKey || typeof window === "undefined") {
-    return null;
-  }
-
-  if (window.Kakao) {
-    if (!window.Kakao.isInitialized()) {
-      window.Kakao.init(kakaoJavascriptKey);
-    }
-
-    return window.Kakao;
-  }
-
-  if (!kakaoSdkLoadPromise) {
-    kakaoSdkLoadPromise = new Promise<KakaoSdk | null>((resolve, reject) => {
-      const existingScript = document.querySelector<HTMLScriptElement>(
-        'script[data-kakao-sdk="true"]',
-      );
-
-      const initializeKakao = () => {
-        if (!window.Kakao) {
-          reject(new Error("카카오 SDK를 불러오지 못했습니다."));
-          return;
-        }
-
-        if (!window.Kakao.isInitialized()) {
-          window.Kakao.init(kakaoJavascriptKey);
-        }
-
-        resolve(window.Kakao);
-      };
-
-      if (existingScript) {
-        existingScript.addEventListener("load", initializeKakao, { once: true });
-        existingScript.addEventListener(
-          "error",
-          () => {
-            reject(new Error("카카오 SDK 스크립트를 불러오지 못했습니다."));
-          },
-          { once: true },
-        );
-
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.src = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.5/kakao.min.js";
-      script.async = true;
-      script.crossOrigin = "anonymous";
-      script.dataset.kakaoSdk = "true";
-      script.addEventListener("load", initializeKakao, { once: true });
-      script.addEventListener(
-        "error",
-        () => {
-          reject(new Error("카카오 SDK 스크립트를 불러오지 못했습니다."));
-        },
-        { once: true },
-      );
-      document.head.append(script);
-    }).catch((error: unknown) => {
-      kakaoSdkLoadPromise = null;
-      throw error;
-    });
-  }
-
-  return kakaoSdkLoadPromise;
-}
-
-interface ProfileDropdownFieldProps {
-  label: string;
-  placeholder: string;
-  value: string;
-  options: {
-    value: string;
-    label: string;
-    description?: string;
-  }[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  contentClassName?: string;
-}
-
-function ProfileDropdownField({
-  label,
-  placeholder,
-  value,
-  options,
-  onChange,
-  disabled = false,
-  contentClassName,
-}: ProfileDropdownFieldProps) {
-  const selectedOption = options.find((option) => option.value === value);
-
-  return (
-    <div className="space-y-2">
-      <div className="text-sm font-medium text-zinc-200">{label}</div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild disabled={disabled}>
-          <Button
-            type="button"
-            variant="outline"
-            className={cn(
-              profileDropdownTriggerClassName,
-              !selectedOption && "text-zinc-500",
-              disabled && "cursor-not-allowed opacity-50",
-            )}
-          >
-            <span className="truncate">{selectedOption?.label ?? placeholder}</span>
-            <ChevronDown className="size-4 shrink-0" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className={cn(
-            "w-(--radix-dropdown-menu-trigger-width) border-white/10 bg-[#12141d] text-zinc-100",
-            contentClassName,
-          )}
-        >
-          <DropdownMenuLabel>{label}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
-            {options.map((option) => (
-              <DropdownMenuRadioItem
-                key={option.value}
-                value={option.value}
-                className="items-start py-2"
-              >
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-zinc-100">{option.label}</span>
-                  {option.description ? (
-                    <span className="text-xs text-zinc-500">{option.description}</span>
-                  ) : null}
-                </div>
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
-interface ProfileDatePickerFieldProps {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}
-
-function ProfileDatePickerField({ label, value, onChange }: ProfileDatePickerFieldProps) {
-  const selectedDate = value ? parseISO(value) : undefined;
-
-  return (
-    <div className="space-y-2">
-      <div className="text-sm font-medium text-zinc-200">{label}</div>
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            className={cn(
-              profileDropdownTriggerClassName,
-              "justify-start text-left font-normal",
-              !selectedDate && "text-zinc-500",
-            )}
-          >
-            <CalendarIcon className="size-4 shrink-0" />
-            <span className="truncate">
-              {selectedDate
-                ? format(selectedDate, "yyyy년 M월 d일", { locale: ko })
-                : "생년월일을 선택하세요"}
-            </span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-auto border-white/10 bg-[#12141d] p-0 text-zinc-100"
-        >
-          <Calendar
-            mode="single"
-            selected={selectedDate}
-            onSelect={(date) => {
-              onChange(date ? format(date, "yyyy-MM-dd") : "");
-            }}
-            locale={ko}
-            captionLayout="dropdown"
-            fromYear={1930}
-            toYear={new Date().getFullYear()}
-            defaultMonth={selectedDate}
-          />
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
-interface ProfileTimeInputFieldProps {
-  value: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}
-
-function ProfileTimeInputField({
-  value,
-  disabled = false,
-  onChange,
-}: ProfileTimeInputFieldProps) {
-  return (
-    <div className="space-y-2">
-      <div className="text-sm font-medium text-zinc-200">출생시각</div>
-      <div className="relative">
-        <Clock3 className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-zinc-500" />
-        <Input
-          aria-label="출생시각 입력"
-          type="time"
-          step={60}
-          disabled={disabled}
-          className="h-12 rounded-2xl border-white/10 bg-black/20 pl-11 text-zinc-100 scheme-dark disabled:cursor-not-allowed disabled:opacity-50"
-          value={value}
-          onChange={(event) => {
-            onChange(event.target.value);
-          }}
-        />
-      </div>
-      <div className="text-xs text-zinc-500">1분 단위로 직접 입력할 수 있습니다.</div>
-    </div>
-  );
-}
+import { ChatComposerPanel } from "./chat-composer-panel";
+import { ChatDeleteProfileDialog } from "./chat-delete-profile-dialog";
+import { ChatProfileDialog } from "./chat-profile-dialog";
+import { ChatShareDialog } from "./chat-share-dialog";
+import { ChatMessageBubble, ToolMessageBubble } from "./tool-message-bubble";
 
 export interface ChatComposerDraft {
   profile: string;
@@ -377,125 +54,92 @@ interface ChatProps {
   onFollowUpSelect: (question: string) => Promise<void>;
 }
 
-function ToolMessageBubble({
-  message,
-}: {
-  message: ConversationSession["messages"][number] & { role: "tool" };
-}) {
-  const [isOpen, setIsOpen] = useState(true);
-  const isPending = message.pending;
-  const hasResults = Boolean(message.toolResults?.length);
-  const hasContent = Boolean(message.content);
+interface ChatConversationHeaderProps {
+  isReadOnly: boolean;
+  title: string;
+}
 
-  const toolLabels = useMemo(() => {
-    if (!message.toolResults?.length) return [];
-    const seen = new Set<string>();
-    return message.toolResults
-      .map((r) => toolCatalog[r.toolKey]?.label ?? r.toolKey)
-      .filter((label) => {
-        if (seen.has(label)) return false;
-        seen.add(label);
-        return true;
-      });
-  }, [message.toolResults]);
+interface ChatEmptyStateProps {
+  featuredPrompts: PromptTemplate[];
+  helperText: string;
+  onPromptSelect: (prompt: PromptTemplate) => void;
+}
 
+function ChatConversationHeader({ isReadOnly, title }: ChatConversationHeaderProps) {
   return (
-    <article className="w-full max-w-240 min-w-0 rounded-[24px] border border-cyan-300/15 bg-linear-to-br from-cyan-300/12 to-cyan-300/5 px-4 py-4 text-cyan-50 shadow-lg shadow-black/10 transition-all duration-500 md:px-5">
-      <button
-        type="button"
-        className="flex w-full flex-wrap items-center gap-2 text-left"
-        onClick={() => setIsOpen((v) => !v)}
-      >
-        <span className="rounded-full border border-cyan-300/20 bg-cyan-300/12 px-2.5 py-1 text-[10px] font-semibold tracking-[0.22em] text-cyan-100/80 uppercase">
-          단계별 도구 분석
-        </span>
-        {isPending ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-black/10 px-2.5 py-1 text-[11px] text-cyan-100/85">
-            <Loader2 className="size-3 animate-spin text-cyan-300" />
-            분석중
-          </span>
-        ) : (
-          <>
-            {toolLabels.map((label) => (
-              <span
-                key={label}
-                className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[10px] font-medium text-cyan-200/80"
-              >
-                {label}
-              </span>
-            ))}
-            <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/15 bg-black/10 px-2.5 py-1 text-[11px] text-cyan-100/80">
-              완료
-            </span>
-          </>
-        )}
-        <span className="ml-auto text-cyan-300/60">
-          <ChevronDown
-            className={cn(
-              "size-4 transition-transform duration-300",
-              isOpen ? "rotate-0" : "-rotate-90",
-            )}
-          />
-        </span>
-      </button>
-
-      {isOpen && (
-        <div className="animate-in fade-in slide-in-from-top-1 duration-300">
-          {isPending && !hasResults && (
-            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-3">
-              <div className="rounded-2xl border border-cyan-300/25 bg-cyan-300/8 px-3 py-2.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="relative flex size-2">
-                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-cyan-300 opacity-60" />
-                    <span className="relative inline-flex size-2 rounded-full bg-cyan-300" />
-                  </span>
-                  <div className="text-[10px] tracking-[0.18em] text-cyan-100/70 uppercase">
-                    Step 1 · 진행중
-                  </div>
-                </div>
-                <div className="mt-2 space-y-1.5">
-                  <div className="h-2 w-3/4 animate-pulse rounded-full bg-cyan-300/30" />
-                  <div
-                    className="h-2 w-1/2 animate-pulse rounded-full bg-cyan-300/20"
-                    style={{ animationDelay: "200ms" }}
-                  />
-                </div>
-              </div>
-              <div className="hidden h-px bg-cyan-300/18 md:block" />
-              <div className="rounded-2xl border border-white/8 bg-white/3 px-3 py-2.5 text-zinc-500">
-                <div className="text-[10px] tracking-[0.18em] text-zinc-600 uppercase">
-                  Step 2 · 대기중
-                </div>
-                <div className="mt-2 space-y-1.5">
-                  <div className="h-2 w-2/3 rounded-full bg-white/8" />
-                  <div className="h-2 w-2/5 rounded-full bg-white/5" />
-                </div>
-              </div>
-            </div>
-          )}
-          {isPending && (
-            <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-black/20">
-              <div className="absolute inset-y-0 w-1/3 animate-[tool-loading-bar_1.8s_ease-in-out_infinite] rounded-full bg-linear-to-r from-transparent via-cyan-300/90 to-transparent" />
-            </div>
-          )}
-          {hasResults && (
-            <div
-              className={cn(
-                "mt-3",
-                isPending && "animate-in fade-in slide-in-from-bottom-1 duration-500",
-              )}
-            >
-              <ToolRunResults toolResults={message.toolResults!} />
-            </div>
-          )}
-          {!hasResults && hasContent && (
-            <p className="mt-3 text-sm leading-7 wrap-break-word whitespace-pre-wrap md:text-[15px]">
-              {message.content}
-            </p>
-          )}
-        </div>
+    <div
+      className={cn(
+        "flex min-w-0 items-start justify-between gap-4",
+        !isReadOnly && "pl-12 md:pl-14",
       )}
-    </article>
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="min-w-0">
+          <Badge
+            variant="outline"
+            className="max-w-full border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[11px] tracking-[0.24em] whitespace-normal text-cyan-100 uppercase"
+          >
+            <Sparkles className="size-3.5" />
+            루모 AI와 이어서 보는 사주 채팅
+          </Badge>
+          <div className="mt-4">
+            <div className="text-[11px] font-semibold tracking-[0.24em] text-zinc-500 uppercase">
+              루모 AI 채팅
+            </div>
+            <h2 className="font-display mt-2 text-2xl leading-tight tracking-tight wrap-break-word text-white md:mt-3 md:text-4xl">
+              {title}
+            </h2>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChatEmptyState({ featuredPrompts, helperText, onPromptSelect }: ChatEmptyStateProps) {
+  return (
+    <div className="flex h-full min-h-0 w-full min-w-0 overflow-y-auto rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)]">
+      <div className="mx-auto my-auto flex w-full max-w-3xl flex-col items-center px-3 py-6 text-center">
+        <Badge
+          variant="outline"
+          className="border-cyan-300/15 bg-cyan-300/10 px-2.5 py-0.5 text-[11px] text-cyan-100"
+        >
+          <MessageSquareText className="size-3.5" />한 줄 질문으로 바로 시작
+        </Badge>
+        <h1 className="font-display mt-3 text-2xl leading-tight tracking-tight text-white sm:text-3xl">
+          루모 AI에게 오늘의 흐름을 물어보세요.
+        </h1>
+        <p className="mt-2 max-w-lg text-xs leading-5 text-zinc-500">
+          호흡은 간결하게, 해석은 또렷하게. 연애, 진로, 궁합, 재물처럼 지금 마음에 걸린 질문을
+          채팅으로 이어가세요.
+        </p>
+
+        <div className="mt-4 grid w-full min-w-0 grid-cols-1 gap-2 md:grid-cols-2">
+          {featuredPrompts.slice(0, 4).map((prompt) => (
+            <button
+              key={prompt.id}
+              type="button"
+              className="rounded-[20px] border border-white/10 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/[0.07]"
+              onClick={() => {
+                onPromptSelect(prompt);
+              }}
+            >
+              <span className="text-[10px] font-semibold tracking-[0.22em] text-zinc-500 uppercase">
+                {prompt.category}
+              </span>
+              <strong className="mt-1 block text-sm font-semibold text-white">
+                {prompt.title}
+              </strong>
+              <span className="mt-0.5 block text-xs leading-5 text-zinc-400">
+                {prompt.summary}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="pt-4 text-center text-[11px] text-zinc-500">{helperText}</div>
+      </div>
+    </div>
   );
 }
 
@@ -550,103 +194,88 @@ function Chat({
 
   const isDraftConversation = activeConversation.id.startsWith("draft-");
   const hasMessages = activeConversation.messages.length > 0;
-  const hasQuestion = question.trim().length > 0;
   const hasProfile = hasStoredChatProfile(profile);
-  const canSubmit = hasQuestion && !isSending;
-  const activeConversationProfile = activeConversation.profile;
-  const activeConversationToneId = activeConversation.toneId;
-  const activeConversationTools = activeConversation.tools;
+  const {
+    id: activeConversationId,
+    messages,
+    profile: activeConversationProfile,
+    toneId: activeConversationToneId,
+    title: activeConversationTitle,
+    tools: activeConversationTools,
+  } = activeConversation;
   const selectedTone =
     toneOptions.find((toneOption) => toneOption.id === selectedToneId) ?? toneOptions[0];
-  const locationOptions = useMemo(
-    () => supportedBirthLocations.map((location) => ({ value: location, label: location })),
-    [],
-  );
-  const calendarTypeOptions = useMemo(
-    () => [
-      { value: "양력", label: "양력", description: "일반적인 양력 생일 기준" },
-      { value: "음력", label: "음력", description: "음력 생일 기준으로 환산" },
-    ],
-    [],
-  );
-  const birthTimeModeOptions = useMemo(
-    () => [
-      { value: "known", label: "시각 입력", description: "시주와 ASC/MC 계산에 반영" },
-      { value: "unknown", label: "시각 모름", description: "시주와 시간축 계산은 제외" },
-    ],
-    [],
-  );
-  const savedProfileOptions = useMemo(
-    () =>
-      availableProfiles.map((savedProfile) => ({
-        id: savedProfile.id,
-        value: savedProfile.value,
-        summary: summarizeChatProfile(parseChatProfile(savedProfile.value)),
-      })),
-    [availableProfiles],
-  );
-  const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
-  const [isAddingProfile, setIsAddingProfile] = useState(false);
-  const [pendingDeleteProfileValue, setPendingDeleteProfileValue] = useState<string | null>(
-    null,
-  );
-  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
-  const [isCreatingShareLink, setIsCreatingShareLink] = useState(false);
-  const [isDeletingProfile, setIsDeletingProfile] = useState(false);
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [profileDraft, setProfileDraft] = useState<ChatProfileFields>(defaultChatProfileFields);
-  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
-  useEffect(() => {
-    const handleTutorialCloseProfileDialog = () => {
-      setIsProfileDialogOpen(false);
-      setIsAddingProfile(false);
-      setEditingProfileId(null);
-    };
-
-    window.addEventListener(
-      "lumo:tutorial-close-profile-dialog",
-      handleTutorialCloseProfileDialog,
-    );
-
-    return () => {
-      window.removeEventListener(
-        "lumo:tutorial-close-profile-dialog",
-        handleTutorialCloseProfileDialog,
-      );
-    };
-  }, []);
-
-  const [shareError, setShareError] = useState("");
-  const [shareUrl, setShareUrl] = useState("");
-  const [messageScrollContainer, setMessageScrollContainer] = useState<HTMLDivElement | null>(
-    null,
-  );
-  const [emptyStateScrollContainer, setEmptyStateScrollContainer] =
-    useState<HTMLDivElement | null>(null);
-  const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
-  const remainingCharacters = 140 - question.length;
-  let helperText = "중요한 결정은 전문가와 상담하세요.";
-  let submitButtonLabel = "로그인 후 전송";
-
-  if (isAuthenticated) {
-    submitButtonLabel = "질문 보내기";
-  }
-
-  if (isSending) {
-    submitButtonLabel = "루모 AI 답변 생성 중";
-  }
-
-  if (!isAuthenticated) {
-    helperText = "채팅 전송과 채팅 내역은 로그인 후에만 사용할 수 있습니다.";
-  } else if (!hasProfile) {
-    helperText = "질문을 보내기 전에 출생 프로필을 먼저 등록해 주세요.";
-  } else if (!kakaoReady) {
-    helperText = "카카오 연동 키가 없어 현재 로그인 버튼은 비활성화됩니다.";
-  }
-
-  if (isReadOnly) {
-    helperText = "이 대화는 공유 시점까지의 내용만 표시됩니다.";
-  }
+  const {
+    handleCopyShareLink,
+    handleOpenShareDialog,
+    handleShareToKakao,
+    isCreatingShareLink,
+    isShareDialogOpen,
+    setIsShareDialogOpen,
+    shareError,
+    shareUrl,
+  } = useChatShareState({
+    conversationId: activeConversationId,
+    conversationTitle: activeConversationTitle,
+    hasMessages,
+    isDraftConversation,
+    isReadOnly,
+    onCreateShareLink,
+  });
+  const {
+    activeScrollContainer,
+    canSubmit,
+    handleScrollToBottom,
+    hasQuestion,
+    helperText,
+    remainingCharacters,
+    setEmptyStateScrollContainer,
+    setMessageScrollContainer,
+    showScrollToBottomButton,
+    submitButtonLabel,
+  } = useChatViewState({
+    hasMessages,
+    hasProfile,
+    isAuthenticated,
+    isReadOnly,
+    isSending,
+    kakaoReady,
+    question,
+    requestError,
+    scrollDependency: activeConversation.messages.length,
+  });
+  const {
+    birthTimeModeOptions,
+    calendarTypeOptions,
+    editingProfileId,
+    handleBackToProfileList,
+    handleDeleteProfileDialogOpenChange,
+    handleDeleteSavedProfile,
+    handleEditSavedProfile,
+    handleOpenProfileDialog,
+    handleProfileDialogOpenChange,
+    handleRequestDeleteSavedProfile,
+    handleSaveProfile,
+    handleStartAddProfile,
+    handleToggleSavedProfile,
+    isAddingProfile,
+    isDeletingProfile,
+    isProfileDialogOpen,
+    isSavingProfile,
+    locationOptions,
+    pendingDeleteProfileValue,
+    profileDraft,
+    savedProfileOptions,
+    setProfileDraft,
+  } = useChatProfileState({
+    availableProfiles,
+    currentProfile: profile,
+    selectedProfileIds,
+    onDeleteProfile,
+    onSaveProfile,
+    onSelectSavedProfile,
+    setProfile,
+  });
 
   useEffect(() => {
     initialize(featuredPrompts, initialProfile);
@@ -685,228 +314,6 @@ function Chat({
     startNewChat,
     syncConversationContext,
   ]);
-
-  const activeScrollContainer = useMemo(() => {
-    if (hasMessages) {
-      return messageScrollContainer?.querySelector<HTMLDivElement>(
-        '[data-slot="scroll-area-viewport"]',
-      );
-    }
-
-    return emptyStateScrollContainer;
-  }, [emptyStateScrollContainer, hasMessages, messageScrollContainer]);
-
-  useEffect(() => {
-    const container = activeScrollContainer;
-
-    if (!container) {
-      return undefined;
-    }
-
-    const updateScrollButton = () => {
-      const distanceFromBottom =
-        container.scrollHeight - (container.scrollTop + container.clientHeight);
-
-      setShowScrollToBottomButton(distanceFromBottom > 24);
-    };
-
-    updateScrollButton();
-    container.addEventListener("scroll", updateScrollButton, { passive: true });
-    window.addEventListener("resize", updateScrollButton);
-
-    const cleanup = () => {
-      container.removeEventListener("scroll", updateScrollButton);
-      window.removeEventListener("resize", updateScrollButton);
-    };
-
-    return cleanup;
-  }, [activeConversation.messages.length, activeScrollContainer, hasMessages, requestError]);
-
-  const handleScrollToBottom = useCallback(() => {
-    if (!activeScrollContainer) {
-      return;
-    }
-
-    activeScrollContainer.scrollTo({
-      top: activeScrollContainer.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [activeScrollContainer]);
-
-  const handleOpenShareDialog = useCallback(async (): Promise<void> => {
-    if (isReadOnly || isDraftConversation || activeConversation.messages.length === 0) {
-      return;
-    }
-
-    setIsShareDialogOpen(true);
-    setShareError("");
-
-    if (shareUrl) {
-      return;
-    }
-
-    setIsCreatingShareLink(true);
-
-    try {
-      setShareUrl(await onCreateShareLink(activeConversation.id));
-    } catch (error) {
-      setShareError(error instanceof Error ? error.message : "공유 링크 생성에 실패했습니다.");
-    } finally {
-      setIsCreatingShareLink(false);
-    }
-  }, [
-    activeConversation.id,
-    activeConversation.messages.length,
-    isDraftConversation,
-    isReadOnly,
-    onCreateShareLink,
-    shareUrl,
-  ]);
-
-  const handleCopyShareLink = useCallback(async (): Promise<void> => {
-    if (!shareUrl) {
-      return;
-    }
-
-    await navigator.clipboard.writeText(shareUrl);
-  }, [shareUrl]);
-
-  const handleShareToKakao = useCallback(async (): Promise<void> => {
-    if (!shareUrl) {
-      return;
-    }
-
-    const fallbackToSharer = () => {
-      window.open(
-        `https://sharer.kakao.com/talk/friends/picker/link?url=${encodeURIComponent(shareUrl)}`,
-        "_blank",
-        "noopener,noreferrer",
-      );
-    };
-
-    try {
-      const kakao = await ensureKakaoSdk();
-
-      if (!kakao) {
-        fallbackToSharer();
-        return;
-      }
-
-      kakao.Share.sendDefault({
-        objectType: "text",
-        text: `${activeConversation.title}\n\n루모 AI 대화를 확인해 보세요.`,
-        link: {
-          mobileWebUrl: shareUrl,
-          webUrl: shareUrl,
-        },
-        buttons: [
-          {
-            title: "대화 보기",
-            link: {
-              mobileWebUrl: shareUrl,
-              webUrl: shareUrl,
-            },
-          },
-        ],
-      });
-    } catch {
-      fallbackToSharer();
-    }
-  }, [activeConversation.title, shareUrl]);
-
-  const handleSaveProfile = useCallback(async (): Promise<void> => {
-    setIsSavingProfile(true);
-
-    try {
-      const serializedProfile = serializeChatProfile(profileDraft);
-      const nextSelectionValue = await onSaveProfile(
-        serializedProfile,
-        editingProfileId ?? undefined,
-        selectedProfileIds,
-      );
-
-      setProfile(nextSelectionValue || serializedProfile);
-      setEditingProfileId(null);
-      setProfileDraft(defaultChatProfileFields);
-      setIsAddingProfile(false);
-    } finally {
-      setIsSavingProfile(false);
-    }
-  }, [editingProfileId, onSaveProfile, profileDraft, selectedProfileIds, setProfile]);
-
-  const handleOpenProfileDialog = useCallback(
-    (showAddForm = false): void => {
-      setEditingProfileId(null);
-      setProfileDraft(parseChatProfile(getPrimarySelectedProfile(profile)));
-      setIsAddingProfile(showAddForm || savedProfileOptions.length === 0);
-      setIsProfileDialogOpen(true);
-    },
-    [profile, savedProfileOptions.length],
-  );
-
-  const handleToggleSavedProfile = useCallback(
-    (nextProfileId: string): void => {
-      const isSelected = selectedProfileIds.includes(nextProfileId);
-      let nextSelectedProfileIds = selectedProfileIds;
-
-      if (isSelected) {
-        nextSelectedProfileIds = selectedProfileIds.filter(
-          (selectedProfileId) => selectedProfileId !== nextProfileId,
-        );
-      } else if (selectedProfileIds.length < 2) {
-        nextSelectedProfileIds = [...selectedProfileIds, nextProfileId];
-      }
-
-      const nextSelectedProfiles = resolveSavedProfileValues(
-        availableProfiles,
-        nextSelectedProfileIds,
-      );
-
-      const nextSelectionValue = serializeProfileSelection(nextSelectedProfiles);
-
-      setProfile(nextSelectionValue);
-      setProfileDraft(parseChatProfile(nextSelectedProfiles[0] ?? ""));
-      onSelectSavedProfile(nextSelectedProfileIds);
-    },
-    [availableProfiles, onSelectSavedProfile, selectedProfileIds, setProfile],
-  );
-
-  const handleEditSavedProfile = useCallback(
-    (savedProfileId: string): void => {
-      const savedProfile = savedProfileOptions.find((option) => option.id === savedProfileId);
-
-      if (!savedProfile) {
-        return;
-      }
-
-      setEditingProfileId(savedProfileId);
-      setProfileDraft(parseChatProfile(savedProfile.value));
-      setIsAddingProfile(true);
-    },
-    [savedProfileOptions],
-  );
-
-  const handleDeleteSavedProfile = useCallback(
-    async (savedProfileId: string): Promise<void> => {
-      setIsDeletingProfile(true);
-
-      try {
-        const nextSelectionValue = await onDeleteProfile(savedProfileId);
-
-        setProfile(nextSelectionValue);
-
-        if (editingProfileId === savedProfileId) {
-          setEditingProfileId(null);
-          setProfileDraft(defaultChatProfileFields);
-          setIsAddingProfile(false);
-        }
-      } finally {
-        setIsDeletingProfile(false);
-        setPendingDeleteProfileValue(null);
-      }
-    },
-    [editingProfileId, onDeleteProfile, setProfile],
-  );
 
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!hasQuestion || isSending) {
@@ -950,67 +357,6 @@ function Chat({
     savedProfileOptions.length,
   ]);
 
-  const renderMessageBody = useCallback(
-    (message: ConversationSession["messages"][number]) => {
-      if (message.role === "tool") {
-        return (
-          <ToolMessageBubble
-            message={message as ConversationSession["messages"][number] & { role: "tool" }}
-          />
-        );
-      }
-
-      return (
-        <article
-          className={cn(
-            "max-w-[86%] min-w-0 rounded-[28px] border px-5 py-4 shadow-lg shadow-black/10 md:max-w-180",
-            message.role === "user"
-              ? "border-transparent bg-zinc-50 text-zinc-950"
-              : "border-white/10 bg-white/5 text-zinc-100",
-            message.pending ? "opacity-70" : "opacity-100",
-          )}
-        >
-          <div className="mb-3 text-[11px] font-semibold tracking-[0.24em] text-zinc-500 uppercase">
-            {message.role === "assistant" ? "루모 AI" : "나"}
-          </div>
-          {message.role === "assistant" ? (
-            <div className="space-y-3">
-              <Streamdown
-                className="lumo-streamdown text-sm leading-7 wrap-break-word md:text-[15px]"
-                animated
-                isAnimating={message.pending}
-              >
-                {message.content}
-              </Streamdown>
-              {!isReadOnly && message.followUpSuggestions?.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {message.followUpSuggestions.slice(0, 3).map((suggestion) => (
-                    <button
-                      key={`${message.id}-${suggestion}`}
-                      type="button"
-                      className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-left text-xs text-cyan-50 transition hover:bg-cyan-300/18 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                      disabled={isSending}
-                      onClick={() => {
-                        onFollowUpSelect(suggestion).catch(() => undefined);
-                      }}
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <p className="text-sm leading-7 wrap-break-word whitespace-pre-wrap md:text-[15px]">
-              {message.content}
-            </p>
-          )}
-        </article>
-      );
-    },
-    [isReadOnly, isSending, onFollowUpSelect],
-  );
-
   return (
     <section className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden text-zinc-100">
       {!isReadOnly ? (
@@ -1038,34 +384,12 @@ function Chat({
             >
               <ScrollArea className="h-full min-h-0 flex-1 overflow-hidden">
                 <div className="min-w-0 space-y-4 p-4 md:p-5">
-                  <div
-                    className={cn(
-                      "flex min-w-0 items-start justify-between gap-4",
-                      !isReadOnly && "pl-12 md:pl-14",
-                    )}
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="min-w-0">
-                        <Badge
-                          variant="outline"
-                          className="max-w-full border-cyan-300/15 bg-cyan-300/10 px-3 py-1 text-[11px] tracking-[0.24em] whitespace-normal text-cyan-100 uppercase"
-                        >
-                          <Sparkles className="size-3.5" />
-                          루모 AI와 이어서 보는 사주 채팅
-                        </Badge>
-                        <div className="mt-4">
-                          <div className="text-[11px] font-semibold tracking-[0.24em] text-zinc-500 uppercase">
-                            루모 AI 채팅
-                          </div>
-                          <h2 className="font-display mt-2 text-2xl leading-tight tracking-tight wrap-break-word text-white md:mt-3 md:text-4xl">
-                            {activeConversation.title}
-                          </h2>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <ChatConversationHeader
+                    isReadOnly={isReadOnly}
+                    title={activeConversationTitle}
+                  />
 
-                  {activeConversation.messages.map((message) => (
+                  {messages.map((message) => (
                     <div
                       key={message.id}
                       className={cn(
@@ -1073,7 +397,26 @@ function Chat({
                         message.role === "user" ? "justify-end" : "justify-start",
                       )}
                     >
-                      {renderMessageBody(message)}
+                      {message.role === "tool" ? (
+                        <ToolMessageBubble
+                          message={
+                            message as ConversationSession["messages"][number] & {
+                              role: "tool";
+                            }
+                          }
+                        />
+                      ) : (
+                        <ChatMessageBubble
+                          isReadOnly={isReadOnly}
+                          isSending={isSending}
+                          message={
+                            message as ConversationSession["messages"][number] & {
+                              role: "assistant" | "user";
+                            }
+                          }
+                          onFollowUpSelect={onFollowUpSelect}
+                        />
+                      )}
                     </div>
                   ))}
 
@@ -1092,48 +435,13 @@ function Chat({
           ) : (
             <div
               ref={setEmptyStateScrollContainer}
-              className="flex h-full min-h-0 w-full min-w-0 overflow-y-auto rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)]"
+              className="flex min-h-0 flex-1 overflow-hidden"
             >
-              <div className="mx-auto my-auto flex w-full max-w-3xl flex-col items-center px-3 py-6 text-center">
-                <Badge
-                  variant="outline"
-                  className="border-cyan-300/15 bg-cyan-300/10 px-2.5 py-0.5 text-[11px] text-cyan-100"
-                >
-                  <MessageSquareText className="size-3.5" />한 줄 질문으로 바로 시작
-                </Badge>
-                <h1 className="font-display mt-3 text-2xl leading-tight tracking-tight text-white sm:text-3xl">
-                  루모 AI에게 오늘의 흐름을 물어보세요.
-                </h1>
-                <p className="mt-2 max-w-lg text-xs leading-5 text-zinc-500">
-                  호흡은 간결하게, 해석은 또렷하게. 연애, 진로, 궁합, 재물처럼 지금 마음에 걸린
-                  질문을 채팅으로 이어가세요.
-                </p>
-
-                <div className="mt-4 grid w-full min-w-0 grid-cols-1 gap-2 md:grid-cols-2">
-                  {featuredPrompts.slice(0, 4).map((prompt) => (
-                    <button
-                      key={prompt.id}
-                      type="button"
-                      className="rounded-[20px] border border-white/10 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/[0.07]"
-                      onClick={() => {
-                        applyPrompt(prompt);
-                      }}
-                    >
-                      <span className="text-[10px] font-semibold tracking-[0.22em] text-zinc-500 uppercase">
-                        {prompt.category}
-                      </span>
-                      <strong className="mt-1 block text-sm font-semibold text-white">
-                        {prompt.title}
-                      </strong>
-                      <span className="mt-0.5 block text-xs leading-5 text-zinc-400">
-                        {prompt.summary}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="pt-4 text-center text-[11px] text-zinc-500">{helperText}</div>
-              </div>
+              <ChatEmptyState
+                featuredPrompts={featuredPrompts}
+                helperText={helperText}
+                onPromptSelect={applyPrompt}
+              />
             </div>
           )}
         </div>
@@ -1156,541 +464,73 @@ function Chat({
             </CardContent>
           </Card>
         ) : (
-          <Card className="relative mx-2 mb-2 shrink-0 rounded-[28px] border border-white/10 bg-white/5 py-0 shadow-lg shadow-black/10 backdrop-blur-xl">
-            {showScrollToBottomButton && activeScrollContainer ? (
-              <div className="pointer-events-none absolute inset-x-0 -top-18 z-20 flex justify-center">
-                <Button
-                  type="button"
-                  size="icon"
-                  className="pointer-events-auto size-10 rounded-full border border-white/10 bg-[#12141d]/95 text-zinc-100 shadow-lg shadow-black/30 hover:bg-white/8 md:size-11"
-                  onClick={handleScrollToBottom}
-                >
-                  <ArrowDown className="size-4" />
-                  <span className="sr-only">아래로 스크롤</span>
-                </Button>
-              </div>
-            ) : null}
-
-            <CardContent className="space-y-2 p-2 md:space-y-3 md:p-3">
-              <div className="relative">
-                <Textarea
-                  aria-label="채팅 질문 입력"
-                  data-tutorial="composer"
-                  className="field-sizing-fixed h-18 max-h-18 resize-none overflow-y-auto rounded-[18px] border border-white/10 bg-[#12141d] px-3 pt-2 pr-10 pb-12 text-[14px] leading-6 text-zinc-100 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-zinc-500 focus-visible:ring-0 focus-visible:ring-offset-0 md:h-20 md:max-h-20 md:rounded-[22px] md:px-4 md:pt-3 md:pb-12 md:text-[15px] [&::-webkit-scrollbar]:hidden"
-                  rows={2}
-                  maxLength={140}
-                  value={question}
-                  onChange={(event) => {
-                    setQuestion(event.target.value);
-                  }}
-                  placeholder={
-                    hasMessages ? "이어서 더 물어보세요..." : "메시지를 입력하세요..."
-                  }
-                />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-end justify-end gap-1 px-3 pb-3 md:px-4">
-                  <div className="text-[11px] text-zinc-500 tabular-nums md:text-xs">
-                    {remainingCharacters} / 140
-                  </div>
-                  <Button
-                    type="button"
-                    disabled={!canSubmit}
-                    className="pointer-events-auto size-9 rounded-xl bg-zinc-50 text-zinc-950 shadow-lg shadow-black/20 hover:bg-zinc-200 md:size-10"
-                    onClick={handleSubmit}
-                  >
-                    <ArrowUp className="size-4" />
-                    <span className="sr-only">{submitButtonLabel}</span>
-                  </Button>
-                </div>
-              </div>
-
-              <Separator className="bg-white/10" />
-
-              <div className="flex flex-wrap items-center gap-1 text-sm text-zinc-300 md:gap-2">
-                <div className="flex flex-wrap items-center gap-1 text-sm text-zinc-300 md:gap-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        data-tutorial="tools-btn"
-                        className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
-                      >
-                        <Compass className="size-4" />
-                        도구 + {selectedTools.length}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      data-tutorial="tools-menu"
-                      className="w-72 border-white/10 bg-[#12141d] text-zinc-100"
-                    >
-                      <DropdownMenuLabel>도구 선택</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      {toolSelectionKeys.map((toolKey) => {
-                        const toolInfo = toolCatalog[toolKey];
-
-                        return (
-                          <DropdownMenuCheckboxItem
-                            key={toolKey}
-                            checked={selectedTools.includes(toolKey)}
-                            disabled={
-                              selectedTools.length === 1 && selectedTools.includes(toolKey)
-                            }
-                            className="items-start py-2"
-                            onCheckedChange={() => {
-                              toggleTool(toolKey);
-                            }}
-                            onSelect={(event) => {
-                              event.preventDefault();
-                            }}
-                          >
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-medium text-zinc-100">
-                                {toolInfo.label}
-                              </span>
-                              {toolInfo.beta ? (
-                                <span className="inline-flex w-fit rounded-full border border-amber-300/20 bg-amber-300/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.14em] text-amber-100 uppercase">
-                                  beta
-                                </span>
-                              ) : null}
-                              <span className="text-xs text-zinc-500">{toolInfo.blurb}</span>
-                            </div>
-                          </DropdownMenuCheckboxItem>
-                        );
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-
-                  {isAuthenticated ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      data-tutorial="profile-btn"
-                      className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
-                      onClick={() => {
-                        handleOpenProfileDialog();
-                      }}
-                    >
-                      <UserRound className="size-4" />
-                      프로필 + {selectedProfileIds.length}
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      data-tutorial="profile-btn"
-                      className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
-                      onClick={onRequestLogin}
-                    >
-                      <UserRound className="size-4" />
-                      프로필 + {selectedProfileIds.length}
-                    </Button>
-                  )}
-
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        data-tutorial="tone-btn"
-                        className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
-                      >
-                        <Paintbrush className="size-4" />
-                        {selectedTone.label}
-                        <ChevronDown className="size-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      data-tutorial="tone-menu"
-                      className="w-72 border-white/10 bg-[#12141d] text-zinc-100"
-                    >
-                      <DropdownMenuLabel>상담 톤</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuRadioGroup
-                        value={selectedToneId}
-                        onValueChange={(value) =>
-                          setSelectedToneId(value as ConversationSession["toneId"])
-                        }
-                      >
-                        {toneOptions.map((toneOption) => (
-                          <DropdownMenuRadioItem
-                            key={toneOption.id}
-                            value={toneOption.id}
-                            className="items-start py-2"
-                          >
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-medium text-zinc-100">
-                                {toneOption.label}
-                              </span>
-                              <span className="text-xs text-zinc-500">
-                                {toneOption.summary}
-                              </span>
-                            </div>
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ChatComposerPanel
+            canSubmit={canSubmit}
+            hasMessages={hasMessages}
+            isAuthenticated={isAuthenticated}
+            question={question}
+            remainingCharacters={remainingCharacters}
+            selectedProfileCount={selectedProfileIds.length}
+            selectedToneId={selectedToneId}
+            selectedToneLabel={selectedTone.label}
+            selectedTools={selectedTools}
+            showScrollToBottomButton={
+              showScrollToBottomButton && Boolean(activeScrollContainer)
+            }
+            submitButtonLabel={submitButtonLabel}
+            onOpenProfileDialog={() => {
+              handleOpenProfileDialog();
+            }}
+            onQuestionChange={setQuestion}
+            onRequestLogin={onRequestLogin}
+            onScrollToBottom={handleScrollToBottom}
+            onSubmit={handleSubmit}
+            onToggleTool={toggleTool}
+            onToneChange={(value) => {
+              setSelectedToneId(value);
+            }}
+          />
         )}
 
-        <Dialog
+        <ChatProfileDialog
           open={isProfileDialogOpen}
-          onOpenChange={(open) => {
-            setIsProfileDialogOpen(open);
+          isAddingProfile={isAddingProfile}
+          isDeletingProfile={isDeletingProfile}
+          isSavingProfile={isSavingProfile}
+          editingProfileId={editingProfileId}
+          profileDraft={profileDraft}
+          savedProfileOptions={savedProfileOptions}
+          selectedProfileIds={selectedProfileIds}
+          locationOptions={locationOptions}
+          calendarTypeOptions={calendarTypeOptions}
+          birthTimeModeOptions={birthTimeModeOptions}
+          setProfileDraft={setProfileDraft}
+          onOpenChange={handleProfileDialogOpenChange}
+          onStartAddProfile={handleStartAddProfile}
+          onBackToList={handleBackToProfileList}
+          onToggleSavedProfile={handleToggleSavedProfile}
+          onEditSavedProfile={handleEditSavedProfile}
+          onRequestDeleteSavedProfile={handleRequestDeleteSavedProfile}
+          onSaveProfile={handleSaveProfile}
+        />
 
-            if (!open) {
-              setIsAddingProfile(false);
-              setEditingProfileId(null);
-            }
-          }}
-        >
-          <DialogContent
-            data-tutorial="profile-dialog"
-            className="border-white/10 bg-[#12141d] text-zinc-100 sm:max-w-xl"
-            onInteractOutside={(event) => {
-              if (document.body.dataset.lumoTutorialOpen === "true") {
-                event.preventDefault();
-              }
-            }}
-            onPointerDownOutside={(event) => {
-              if (document.body.dataset.lumoTutorialOpen === "true") {
-                event.preventDefault();
-              }
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>출생 프로필</DialogTitle>
-              <DialogDescription className="text-zinc-400">
-                이름, 생년월일, 출생지, 성별, 음력/양력, 출생시각을 구조화해서 저장합니다.
-              </DialogDescription>
-            </DialogHeader>
-            {!isAddingProfile && savedProfileOptions.length > 0 ? (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium text-zinc-200">등록된 프로필 선택</div>
-                    <div className="text-xs text-zinc-500">최대 2개까지 선택</div>
-                  </div>
-                  <div className="grid gap-1.5">
-                    {savedProfileOptions.map((savedProfileOption) => (
-                      <div
-                        key={savedProfileOption.id}
-                        className="flex min-w-0 items-stretch gap-1.5"
-                      >
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={
-                            !selectedProfileIds.includes(savedProfileOption.id) &&
-                            selectedProfileIds.length >= 2
-                          }
-                          className={cn(
-                            "h-auto min-h-11 min-w-0 flex-1 justify-between rounded-[18px] border-white/10 bg-black/20 px-3 py-2 text-left text-zinc-100 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50",
-                            selectedProfileIds.includes(savedProfileOption.id) &&
-                              "border-cyan-300/40 bg-cyan-400/10 text-zinc-50 shadow-[0_0_0_1px_rgba(103,232,249,0.15)]",
-                          )}
-                          onClick={() => {
-                            handleToggleSavedProfile(savedProfileOption.id);
-                          }}
-                        >
-                          <span className="block min-w-0 flex-1 truncate leading-5">
-                            {savedProfileOption.summary}
-                          </span>
-                          {selectedProfileIds.includes(savedProfileOption.id) ? (
-                            <Check className="ml-2 size-4 shrink-0 text-cyan-100" />
-                          ) : null}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="size-8 shrink-0 rounded-[14px] border-white/10 bg-black/20 text-zinc-300 hover:bg-white/8 hover:text-white"
-                          aria-label="프로필 수정"
-                          onClick={() => {
-                            handleEditSavedProfile(savedProfileOption.id);
-                          }}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          disabled={isDeletingProfile}
-                          className="size-8 shrink-0 rounded-[14px] border-white/10 bg-black/20 text-zinc-300 hover:bg-rose-400/15 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label="프로필 삭제"
-                          onClick={() => {
-                            setPendingDeleteProfileValue(savedProfileOption.id);
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    data-tutorial="add-profile-btn"
-                    className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
-                    onClick={() => {
-                      setEditingProfileId(null);
-                      setProfileDraft(defaultChatProfileFields);
-                      setIsAddingProfile(true);
-                    }}
-                  >
-                    새 프로필 추가
-                  </Button>
-                </DialogFooter>
-              </div>
-            ) : (
-              <div data-tutorial="profile-form" className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2 sm:col-span-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium text-zinc-200">
-                      {editingProfileId ? "프로필 수정" : "새 프로필 추가"}
-                    </div>
-                    {savedProfileOptions.length > 0 ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="h-8 rounded-full px-3 text-xs text-zinc-400 hover:bg-white/6 hover:text-white"
-                        onClick={() => {
-                          setEditingProfileId(null);
-                          setIsAddingProfile(false);
-                          setProfileDraft(parseChatProfile(getPrimarySelectedProfile(profile)));
-                        }}
-                      >
-                        목록으로
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="space-y-2 sm:col-span-2">
-                  <div className="text-sm font-medium text-zinc-200">이름</div>
-                  <Input
-                    aria-label="이름 입력"
-                    className="h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-100 placeholder:text-zinc-500"
-                    value={profileDraft.name}
-                    onChange={(event) => {
-                      setProfileDraft((current) => ({ ...current, name: event.target.value }));
-                    }}
-                    placeholder="이름을 입력하세요"
-                  />
-                </div>
-
-                <div className="space-y-2 sm:col-span-2">
-                  <ProfileDropdownField
-                    label="출생지"
-                    placeholder="도시를 선택하세요"
-                    value={profileDraft.location}
-                    options={locationOptions}
-                    onChange={(value) => {
-                      setProfileDraft((current) => ({
-                        ...current,
-                        location: value,
-                      }));
-                    }}
-                  />
-                </div>
-
-                <ProfileDatePickerField
-                  label="생년월일"
-                  value={profileDraft.birthDate}
-                  onChange={(value) => {
-                    setProfileDraft((current) => ({
-                      ...current,
-                      birthDate: value,
-                    }));
-                  }}
-                />
-
-                <div className="space-y-2">
-                  <div className="text-sm font-medium text-zinc-200">성별</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(["남", "여"] as const).map((gender) => (
-                      <Button
-                        key={gender}
-                        type="button"
-                        variant="outline"
-                        className={cn(
-                          "h-12 rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white",
-                          profileDraft.gender === gender && selectedProfileButtonClassName,
-                        )}
-                        onClick={() => {
-                          setProfileDraft((current) => ({ ...current, gender }));
-                        }}
-                      >
-                        {profileDraft.gender === gender ? (
-                          <Check className="mr-2 size-4 shrink-0 text-cyan-100" />
-                        ) : null}
-                        {gender}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-
-                <ProfileDropdownField
-                  label="달력"
-                  placeholder="달력 종류를 선택하세요"
-                  value={profileDraft.calendarType}
-                  options={calendarTypeOptions}
-                  onChange={(value) => {
-                    setProfileDraft((current) => ({
-                      ...current,
-                      calendarType: value as ChatProfileFields["calendarType"],
-                    }));
-                  }}
-                />
-
-                <div className="space-y-2 sm:col-span-2">
-                  <div className="text-sm font-medium text-zinc-200">출생시각</div>
-                  <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)]">
-                    <ProfileDropdownField
-                      label="시각 상태"
-                      placeholder="입력 여부 선택"
-                      value={profileDraft.birthTimeKnown ? "known" : "unknown"}
-                      options={birthTimeModeOptions}
-                      onChange={(value) => {
-                        setProfileDraft((current) => ({
-                          ...current,
-                          birthTimeKnown: value === "known",
-                        }));
-                      }}
-                    />
-                    <ProfileTimeInputField
-                      disabled={!profileDraft.birthTimeKnown}
-                      onChange={(value) => {
-                        setProfileDraft((current) => ({
-                          ...current,
-                          birthTime: value,
-                        }));
-                      }}
-                      value={profileDraft.birthTime}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-            {isAddingProfile ? (
-              <>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-300">
-                  <div>프로필 요약: {summarizeChatProfile(profileDraft)}</div>
-                </div>
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    disabled={
-                      isSavingProfile ||
-                      !isChatProfileComplete(profileDraft) ||
-                      (profileDraft.birthTimeKnown && profileDraft.birthTime.length === 0)
-                    }
-                    className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
-                    onClick={handleSaveProfile}
-                  >
-                    저장 후 목록으로
-                  </Button>
-                </DialogFooter>
-              </>
-            ) : null}
-          </DialogContent>
-        </Dialog>
-
-        <Dialog
+        <ChatDeleteProfileDialog
           open={Boolean(pendingDeleteProfileValue)}
-          onOpenChange={(open) => {
-            if (!open && !isDeletingProfile) {
-              setPendingDeleteProfileValue(null);
-            }
-          }}
-        >
-          <DialogContent className="border-white/10 bg-[#11131a] text-zinc-100 sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>프로필 삭제</DialogTitle>
-              <DialogDescription className="text-zinc-400">
-                선택한 출생 프로필을 삭제합니다. 이 작업은 되돌릴 수 없습니다.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="rounded-2xl border-white/10 bg-black/20 text-zinc-200 hover:bg-white/8 hover:text-white"
-                disabled={isDeletingProfile}
-                onClick={() => {
-                  setPendingDeleteProfileValue(null);
-                }}
-              >
-                취소
-              </Button>
-              <Button
-                type="button"
-                className="rounded-2xl bg-red-500/90 text-white hover:bg-red-500"
-                disabled={!pendingDeleteProfileValue || isDeletingProfile}
-                onClick={() => {
-                  if (!pendingDeleteProfileValue) {
-                    return;
-                  }
+          isDeletingProfile={isDeletingProfile}
+          canDelete={Boolean(pendingDeleteProfileValue)}
+          onOpenChange={handleDeleteProfileDialogOpenChange}
+          onConfirm={handleDeleteSavedProfile}
+        />
 
-                  handleDeleteSavedProfile(pendingDeleteProfileValue).catch(() => undefined);
-                }}
-              >
-                삭제
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
-          <DialogContent className="border-white/10 bg-[#12141d] text-zinc-100 sm:max-w-xl">
-            <DialogHeader>
-              <DialogTitle>대화 공유</DialogTitle>
-              <DialogDescription className="text-zinc-400">
-                공유 링크로 들어온 사용자는 채팅을 이어서 보낼 수 없고, 현재까지의 대화만 읽을
-                수 있습니다.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-300">
-              <div className="flex items-center gap-2">
-                <Link2 className="size-4 text-zinc-500" />
-                <span>
-                  {isCreatingShareLink
-                    ? "공유 링크를 만드는 중입니다..."
-                    : shareUrl || shareError || "공유 링크를 준비합니다."}
-                </span>
-              </div>
-            </div>
-            <DialogFooter className="sm:justify-between">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!shareUrl}
-                className="rounded-2xl border-white/10 bg-transparent text-zinc-100 hover:bg-white/8 hover:text-white"
-                onClick={handleCopyShareLink}
-              >
-                <Copy className="size-4" />
-                링크 복사
-              </Button>
-              <Button
-                type="button"
-                disabled={!shareUrl}
-                className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-cyan-100"
-                onClick={handleShareToKakao}
-              >
-                <MessageCircleMore className="size-4" />
-                카카오톡으로 공유
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ChatShareDialog
+          open={isShareDialogOpen}
+          isCreatingShareLink={isCreatingShareLink}
+          shareUrl={shareUrl}
+          shareError={shareError}
+          onOpenChange={setIsShareDialogOpen}
+          onCopyShareLink={handleCopyShareLink}
+          onShareToKakao={handleShareToKakao}
+        />
       </div>
     </section>
   );
