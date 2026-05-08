@@ -17,9 +17,9 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  toolCatalog,
   toolSelectionKeys,
   toneOptions,
-  toolCatalog,
   type ConversationSession,
 } from "@/lib/lumo-content";
 
@@ -208,7 +208,16 @@ export function ChatComposerPanel({
               >
                 <DropdownMenuLabel>상담 톤</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup value={selectedToneId} onValueChange={onToneChange}>
+                <DropdownMenuRadioGroup
+                  value={selectedToneId}
+                  onValueChange={(value) => {
+                    const nextTone = toneOptions.find((toneOption) => toneOption.id === value);
+
+                    if (!nextTone) return;
+
+                    onToneChange(nextTone.id);
+                  }}
+                >
                   {toneOptions.map((toneOption) => (
                     <DropdownMenuRadioItem
                       key={toneOption.id}
