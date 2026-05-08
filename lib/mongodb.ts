@@ -44,6 +44,14 @@ async function ensureMongoIndexes(database: Db): Promise<void> {
       },
       { name: "conversations_userId_updatedAt" },
     ),
+    database.collection("promptTemplates").createIndex(
+      {
+        featured: 1,
+        order: 1,
+        title: 1,
+      },
+      { name: "promptTemplates_featured_order_title" },
+    ),
     database.collection("sharedConversationSnapshots").createIndex(
       { shareId: 1 },
       {

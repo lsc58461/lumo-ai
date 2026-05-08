@@ -19,7 +19,7 @@ export default async function Home({ searchParams }: HomePageProps) {
     : resolvedSearchParams.share;
   const {
     featuredPrompts,
-    conversationSessions,
+    conversationPreviews,
     initialProfiles,
     initialActiveProfileIds,
     initialProfile,
@@ -45,7 +45,7 @@ export default async function Home({ searchParams }: HomePageProps) {
   return (
     <HomeShell
       featuredPrompts={featuredPrompts}
-      initialConversations={conversationSessions}
+      initialConversationPreviews={conversationPreviews}
       initialProfiles={initialProfiles}
       initialActiveProfileIds={initialActiveProfileIds}
       initialProfile={initialProfile}

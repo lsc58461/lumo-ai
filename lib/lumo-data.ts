@@ -4,13 +4,13 @@ import { cache } from "react";
 import { defaultChatProfile, formatConversationUpdatedAt } from "@/lib/chat-session";
 import { CONVERSATIONS_COLLECTION } from "@/lib/conversation-collection";
 import {
-  toConversationPreview,
   type ChatMessage,
+  type ConversationPreview,
   featuredPromptSeeds,
   type ConversationSession,
   type PromptTemplate,
 } from "@/lib/lumo-content";
-import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
+import { getMongoDatabase } from "@/lib/mongodb";
 import {
   resolveSavedProfileValues,
   serializeProfileSelection,
@@ -51,6 +51,17 @@ interface ConversationSessionDocument {
   messages: ChatMessageDocument[];
   featured?: boolean;
   userId?: string;
+  _id?: {
+    toString(): string;
+  };
+}
+
+interface ConversationPreviewDocument {
+  slug?: string;
+  title: string;
+  focus: string;
+  preview: string;
+  updatedAt: string | Date;
   _id?: {
     toString(): string;
   };
@@ -133,6 +144,16 @@ function mapConversationSession(document: ConversationSessionDocument): Conversa
   };
 }
 
+function mapConversationPreview(document: ConversationPreviewDocument): ConversationPreview {
+  return {
+    id: document._id?.toString() ?? document.slug ?? `conversation-${document.title}`,
+    title: document.title,
+    focus: document.focus,
+    updatedAt: formatConversationUpdatedAt(document.updatedAt),
+    preview: document.preview,
+  };
+}
+
 function mapSavedProfileRecord(document: SavedProfileDocument): SavedProfileRecord {
   return {
     id: document._id?.toString() ?? "",
@@ -141,109 +162,91 @@ function mapSavedProfileRecord(document: SavedProfileDocument): SavedProfileReco
 }
 
 export const getHomePageData = cache(async (userId?: string, shareId?: string) => {
-  const fallbackData = {
-    featuredPrompts: featuredPromptSeeds,
-    conversationPreviews: [],
-    conversationSessions: [],
-    initialProfiles: [] as SavedProfileRecord[],
-    initialActiveProfileIds: [] as string[],
-    initialProfile: defaultChatProfile,
-    initialUserName: undefined as string | undefined,
-    initialUserImage: undefined as string | undefined,
-    sharedConversation: null as ConversationSession | null,
-    isSharedView: false,
-  };
-
-  if (!isMongoConfigured()) {
-    return fallbackData;
-  }
-
-  try {
-    const database = await getMongoDatabase();
-    const promptDocumentsPromise = database
-      .collection<PromptTemplateDocument>("promptTemplates")
-      .find({ featured: true })
-      .sort({ order: 1, title: 1 })
-      .limit(6)
-      .toArray();
-    const conversationDocumentsPromise =
-      userId && !shareId
-        ? database
-            .collection<ConversationSessionDocument>(CONVERSATIONS_COLLECTION)
-            .find({ userId })
-            .sort({ updatedAt: -1 })
-            .limit(12)
-            .toArray()
-        : Promise.resolve([] as ConversationSessionDocument[]);
-    const userProfilePromise = userId
-      ? database.collection<UserProfileDocument>("userProfiles").findOne({ userId })
-      : Promise.resolve(null);
-    const savedProfilesPromise = userId
+  const database = await getMongoDatabase();
+  const promptDocumentsPromise = database
+    .collection<PromptTemplateDocument>("promptTemplates")
+    .find({ featured: true })
+    .sort({ order: 1, title: 1 })
+    .limit(6)
+    .toArray();
+  const conversationPreviewDocumentsPromise =
+    userId && !shareId
       ? database
-          .collection<SavedProfileDocument>("savedProfiles")
-          .find({ userId })
-          .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+          .collection<ConversationPreviewDocument>(CONVERSATIONS_COLLECTION)
+          .find(
+            { userId },
+            {
+              projection: {
+                title: 1,
+                focus: 1,
+                preview: 1,
+                updatedAt: 1,
+              },
+            },
+          )
+          .sort({ updatedAt: -1 })
+          .limit(12)
           .toArray()
-      : Promise.resolve([] as SavedProfileDocument[]);
-    const userDocumentPromise = userId
-      ? database.collection<UserDocument>("users").findOne(buildUserIdQuery(userId))
-      : Promise.resolve(null);
-    const sharedConversationPromise = shareId
-      ? database
-          .collection<SharedConversationDocument>("sharedConversationSnapshots")
-          .findOne({ shareId })
-      : Promise.resolve(null);
-    const [
-      promptDocuments,
-      conversationDocuments,
-      userProfileDocument,
-      savedProfileDocuments,
-      userDocument,
-      sharedConversationDocument,
-    ] = await Promise.all([
-      promptDocumentsPromise,
-      conversationDocumentsPromise,
-      userProfilePromise,
-      savedProfilesPromise,
-      userDocumentPromise,
-      sharedConversationPromise,
-    ]);
+      : Promise.resolve([] as ConversationPreviewDocument[]);
+  const userProfilePromise = userId
+    ? database.collection<UserProfileDocument>("userProfiles").findOne({ userId })
+    : Promise.resolve(null);
+  const savedProfilesPromise = userId
+    ? database
+        .collection<SavedProfileDocument>("savedProfiles")
+        .find({ userId })
+        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+        .toArray()
+    : Promise.resolve([] as SavedProfileDocument[]);
+  const userDocumentPromise = userId
+    ? database.collection<UserDocument>("users").findOne(buildUserIdQuery(userId))
+    : Promise.resolve(null);
+  const sharedConversationPromise = shareId
+    ? database
+        .collection<SharedConversationDocument>("sharedConversationSnapshots")
+        .findOne({ shareId })
+    : Promise.resolve(null);
+  const [
+    promptDocuments,
+    conversationPreviewDocuments,
+    userProfileDocument,
+    savedProfileDocuments,
+    userDocument,
+    sharedConversationDocument,
+  ] = await Promise.all([
+    promptDocumentsPromise,
+    conversationPreviewDocumentsPromise,
+    userProfilePromise,
+    savedProfilesPromise,
+    userDocumentPromise,
+    sharedConversationPromise,
+  ]);
 
-    const mappedConversationSessions = conversationDocuments.map(mapConversationSession);
-    const mappedSharedConversation = sharedConversationDocument
-      ? mapConversationSession(sharedConversationDocument)
-      : null;
-    const initialProfiles = savedProfileDocuments.map(mapSavedProfileRecord);
-    const initialActiveProfileIds = userProfileDocument?.activeProfileIds ?? [];
-    const initialProfileValues = resolveSavedProfileValues(
-      initialProfiles,
-      initialActiveProfileIds,
-    );
+  const mappedSharedConversation = sharedConversationDocument
+    ? mapConversationSession(sharedConversationDocument)
+    : null;
+  const initialProfiles = savedProfileDocuments.map(mapSavedProfileRecord);
+  const initialActiveProfileIds = userProfileDocument?.activeProfileIds ?? [];
+  const initialProfileValues = resolveSavedProfileValues(
+    initialProfiles,
+    initialActiveProfileIds,
+  );
 
-    return {
-      featuredPrompts:
-        promptDocuments.length > 0
-          ? promptDocuments.map(mapPromptTemplate)
-          : featuredPromptSeeds,
-      conversationPreviews:
-        mappedSharedConversation || mappedConversationSessions.length === 0
-          ? []
-          : mappedConversationSessions.map(toConversationPreview),
-      conversationSessions:
-        mappedSharedConversation || mappedConversationSessions.length === 0
-          ? []
-          : mappedConversationSessions,
-      initialProfiles,
-      initialActiveProfileIds,
-      initialProfile: serializeProfileSelection(initialProfileValues) || defaultChatProfile,
-      initialUserName:
-        (userProfileDocument?.name ?? userDocument?.name ?? undefined) || undefined,
-      initialUserImage:
-        (userProfileDocument?.image ?? userDocument?.image ?? undefined) || undefined,
-      sharedConversation: mappedSharedConversation,
-      isSharedView: Boolean(mappedSharedConversation),
-    };
-  } catch {
-    return fallbackData;
-  }
+  return {
+    featuredPrompts:
+      promptDocuments.length > 0 ? promptDocuments.map(mapPromptTemplate) : featuredPromptSeeds,
+    conversationPreviews:
+      mappedSharedConversation || conversationPreviewDocuments.length === 0
+        ? []
+        : conversationPreviewDocuments.map(mapConversationPreview),
+    initialProfiles,
+    initialActiveProfileIds,
+    initialProfile: serializeProfileSelection(initialProfileValues) || defaultChatProfile,
+    initialUserName:
+      (userProfileDocument?.name ?? userDocument?.name ?? undefined) || undefined,
+    initialUserImage:
+      (userProfileDocument?.image ?? userDocument?.image ?? undefined) || undefined,
+    sharedConversation: mappedSharedConversation,
+    isSharedView: Boolean(mappedSharedConversation),
+  };
 });

@@ -26,7 +26,7 @@ import {
   type ConversationSession,
   type ToolExecutionResult,
 } from "@/lib/lumo-content";
-import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
+import { getMongoDatabase } from "@/lib/mongodb";
 import { parseChatProfile, parseProfileSelection } from "@/lib/profile";
 import {
   createToolAnalysisResults,
@@ -319,7 +319,6 @@ async function persistConversation(
   userImage?: string | null,
 ): Promise<{
   conversation: ConversationSession;
-  saved: boolean;
 }> {
   const assistantMessage = createChatMessage("assistant", assistantText);
   const generatedTitle = await generateConversationTitle(
@@ -338,99 +337,76 @@ async function persistConversation(
     tools: body.tools,
     messages: [...sanitizedMessages, toMessageDocument(assistantMessage)],
   };
+  const database = await getMongoDatabase();
+  await database.collection<UserProfileDocument>("userProfiles").updateOne(
+    { userId },
+    {
+      $set: {
+        userId,
+        name: userName,
+        image: userImage,
+        updatedAt: new Date().toISOString(),
+      },
+      $setOnInsert: {
+        activeProfileId: "",
+        activeProfileIds: [],
+      },
+    },
+    { upsert: true },
+  );
+  const conversations =
+    database.collection<ConversationSessionDocument>(CONVERSATIONS_COLLECTION);
+  let existingConversation: ConversationSessionDocument | null = null;
 
-  if (!isMongoConfigured()) {
-    return {
-      conversation: mapConversationSession(
-        fallbackConversationDocument,
-        body.conversationId ?? `chat-${Date.now()}`,
-      ),
-      saved: false,
-    };
+  if (body.conversationId && ObjectId.isValid(body.conversationId)) {
+    const conversationObjectId = new ObjectId(body.conversationId);
+    existingConversation = await conversations.findOne({
+      _id: conversationObjectId,
+      userId,
+    });
   }
 
-  try {
-    const database = await getMongoDatabase();
-    await database.collection<UserProfileDocument>("userProfiles").updateOne(
-      { userId },
+  const nextConversationDocument: ConversationSessionDocument = {
+    ...fallbackConversationDocument,
+    title:
+      existingConversation?.title && existingConversation.title !== "새 채팅"
+        ? existingConversation.title
+        : fallbackConversationDocument.title,
+    createdAt: existingConversation?.createdAt ?? fallbackConversationDocument.createdAt,
+    userId,
+  };
+
+  if (existingConversation?._id) {
+    await conversations.updateOne(
       {
-        $set: {
-          userId,
-          name: userName,
-          image: userImage,
-          updatedAt: new Date().toISOString(),
-        },
-        $setOnInsert: {
-          activeProfileId: "",
-          activeProfileIds: [],
-        },
+        _id: existingConversation._id,
+        userId,
+      },
+      {
+        $set: nextConversationDocument,
       },
       { upsert: true },
     );
-    const conversations =
-      database.collection<ConversationSessionDocument>(CONVERSATIONS_COLLECTION);
-    let existingConversation: ConversationSessionDocument | null = null;
-
-    if (body.conversationId && ObjectId.isValid(body.conversationId)) {
-      const conversationObjectId = new ObjectId(body.conversationId);
-      existingConversation = await conversations.findOne({
-        _id: conversationObjectId,
-        userId,
-      });
-    }
-
-    const nextConversationDocument: ConversationSessionDocument = {
-      ...fallbackConversationDocument,
-      title:
-        existingConversation?.title && existingConversation.title !== "새 채팅"
-          ? existingConversation.title
-          : fallbackConversationDocument.title,
-      createdAt: existingConversation?.createdAt ?? fallbackConversationDocument.createdAt,
-      userId,
-    };
-
-    if (existingConversation?._id) {
-      await conversations.updateOne(
-        {
-          _id: existingConversation._id,
-          userId,
-        },
-        {
-          $set: nextConversationDocument,
-        },
-        { upsert: true },
-      );
-
-      return {
-        conversation: mapConversationSession({
-          ...nextConversationDocument,
-          _id: existingConversation._id,
-        }),
-        saved: true,
-      };
-    }
-
-    const insertResult = await conversations.insertOne({
-      ...nextConversationDocument,
-      featured: false,
-    });
 
     return {
       conversation: mapConversationSession({
         ...nextConversationDocument,
-        _id: insertResult.insertedId,
+        _id: existingConversation._id,
       }),
-      saved: true,
-    };
-  } catch {
-    return {
-      conversation: mapConversationSession(
-        fallbackConversationDocument,
-        body.conversationId ?? `local-${Date.now()}`,
-      ),
-      saved: false,
     };
   }
+
+  const insertResult = await conversations.insertOne({
+    ...nextConversationDocument,
+    featured: false,
+  });
+
+  return {
+    conversation: mapConversationSession({
+      ...nextConversationDocument,
+      _id: insertResult.insertedId,
+    }),
+  };
 }
 
 async function generateLumoReplyStream(prompt: string, modelIndex: number) {
@@ -801,7 +777,6 @@ export async function POST(request: Request) {
           enqueueEvent({
             type: "done",
             conversation: persistedConversation.conversation,
-            saved: persistedConversation.saved,
           });
         } catch (error) {
           const message =

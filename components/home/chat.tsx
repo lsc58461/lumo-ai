@@ -36,6 +36,7 @@ interface ChatProps {
   featuredPrompts: PromptTemplate[];
   initialProfile: string;
   isAuthenticated: boolean;
+  isConversationLoading: boolean;
   isReadOnly: boolean;
   kakaoReady: boolean;
   isSending: boolean;
@@ -63,6 +64,19 @@ interface ChatEmptyStateProps {
   featuredPrompts: PromptTemplate[];
   helperText: string;
   onPromptSelect: (prompt: PromptTemplate) => void;
+}
+
+function ChatLoadingState() {
+  return (
+    <div className="flex h-full min-h-0 w-full min-w-0 items-center justify-center rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)] px-6 text-center">
+      <div>
+        <div className="text-sm font-semibold text-zinc-100">채팅을 불러오는 중입니다.</div>
+        <p className="mt-2 text-sm leading-6 text-zinc-500">
+          저장된 메시지와 도구 분석 결과를 가져오고 있습니다.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function ChatConversationHeader({ isReadOnly, title }: ChatConversationHeaderProps) {
@@ -149,6 +163,7 @@ function Chat({
   featuredPrompts,
   initialProfile,
   isAuthenticated,
+  isConversationLoading,
   isReadOnly,
   kakaoReady,
   isSending,
@@ -282,6 +297,10 @@ function Chat({
   }, [featuredPrompts, initialize, initialProfile]);
 
   useEffect(() => {
+    if (isConversationLoading) {
+      return;
+    }
+
     if (isReadOnly) {
       syncConversationContext(
         activeConversationProfile,
@@ -309,6 +328,7 @@ function Chat({
     featuredPrompts,
     hasMessages,
     initialProfile,
+    isConversationLoading,
     isReadOnly,
     isDraftConversation,
     startNewChat,
@@ -316,7 +336,7 @@ function Chat({
   ]);
 
   const handleSubmit = useCallback(async (): Promise<void> => {
-    if (!hasQuestion || isSending) {
+    if (!hasQuestion || isConversationLoading || isSending) {
       return;
     }
 
@@ -345,6 +365,7 @@ function Chat({
     hasProfile,
     hasQuestion,
     isAuthenticated,
+    isConversationLoading,
     isSending,
     onRequestLogin,
     onSubmit,
@@ -356,6 +377,77 @@ function Chat({
     handleOpenProfileDialog,
     savedProfileOptions.length,
   ]);
+
+  let conversationBody: React.ReactNode;
+
+  if (hasMessages) {
+    conversationBody = (
+      <div ref={setMessageScrollContainer} className="flex min-h-0 flex-1 overflow-hidden">
+        <ScrollArea className="h-full min-h-0 flex-1 overflow-hidden">
+          <div className="min-w-0 space-y-4 p-4 md:p-5">
+            <ChatConversationHeader isReadOnly={isReadOnly} title={activeConversationTitle} />
+
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={cn(
+                  "flex min-w-0",
+                  message.role === "user" ? "justify-end" : "justify-start",
+                )}
+              >
+                {message.role === "tool" ? (
+                  <ToolMessageBubble
+                    message={
+                      message as ConversationSession["messages"][number] & {
+                        role: "tool";
+                      }
+                    }
+                  />
+                ) : (
+                  <ChatMessageBubble
+                    isReadOnly={isReadOnly}
+                    isSending={isSending}
+                    message={
+                      message as ConversationSession["messages"][number] & {
+                        role: "assistant" | "user";
+                      }
+                    }
+                    onFollowUpSelect={onFollowUpSelect}
+                  />
+                )}
+              </div>
+            ))}
+
+            {requestError ? (
+              <div className="rounded-[24px] border border-red-400/20 bg-red-500/10 px-5 py-4 text-sm leading-7 text-red-100">
+                {requestError}
+              </div>
+            ) : null}
+
+            <div className="px-1 pt-3 text-center text-[11px] text-zinc-500 md:text-xs">
+              {helperText}
+            </div>
+          </div>
+        </ScrollArea>
+      </div>
+    );
+  } else if (isConversationLoading) {
+    conversationBody = (
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <ChatLoadingState />
+      </div>
+    );
+  } else {
+    conversationBody = (
+      <div ref={setEmptyStateScrollContainer} className="flex min-h-0 flex-1 overflow-hidden">
+        <ChatEmptyState
+          featuredPrompts={featuredPrompts}
+          helperText={helperText}
+          onPromptSelect={applyPrompt}
+        />
+      </div>
+    );
+  }
 
   return (
     <section className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden text-zinc-100">
@@ -377,73 +469,7 @@ function Chat({
 
       <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {hasMessages ? (
-            <div
-              ref={setMessageScrollContainer}
-              className="flex min-h-0 flex-1 overflow-hidden"
-            >
-              <ScrollArea className="h-full min-h-0 flex-1 overflow-hidden">
-                <div className="min-w-0 space-y-4 p-4 md:p-5">
-                  <ChatConversationHeader
-                    isReadOnly={isReadOnly}
-                    title={activeConversationTitle}
-                  />
-
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        "flex min-w-0",
-                        message.role === "user" ? "justify-end" : "justify-start",
-                      )}
-                    >
-                      {message.role === "tool" ? (
-                        <ToolMessageBubble
-                          message={
-                            message as ConversationSession["messages"][number] & {
-                              role: "tool";
-                            }
-                          }
-                        />
-                      ) : (
-                        <ChatMessageBubble
-                          isReadOnly={isReadOnly}
-                          isSending={isSending}
-                          message={
-                            message as ConversationSession["messages"][number] & {
-                              role: "assistant" | "user";
-                            }
-                          }
-                          onFollowUpSelect={onFollowUpSelect}
-                        />
-                      )}
-                    </div>
-                  ))}
-
-                  {requestError ? (
-                    <div className="rounded-[24px] border border-red-400/20 bg-red-500/10 px-5 py-4 text-sm leading-7 text-red-100">
-                      {requestError}
-                    </div>
-                  ) : null}
-
-                  <div className="px-1 pt-3 text-center text-[11px] text-zinc-500 md:text-xs">
-                    {helperText}
-                  </div>
-                </div>
-              </ScrollArea>
-            </div>
-          ) : (
-            <div
-              ref={setEmptyStateScrollContainer}
-              className="flex min-h-0 flex-1 overflow-hidden"
-            >
-              <ChatEmptyState
-                featuredPrompts={featuredPrompts}
-                helperText={helperText}
-                onPromptSelect={applyPrompt}
-              />
-            </div>
-          )}
+          {conversationBody}
         </div>
 
         {isReadOnly ? (
@@ -465,7 +491,7 @@ function Chat({
           </Card>
         ) : (
           <ChatComposerPanel
-            canSubmit={canSubmit}
+            canSubmit={canSubmit && !isConversationLoading}
             hasMessages={hasMessages}
             isAuthenticated={isAuthenticated}
             question={question}
@@ -477,7 +503,7 @@ function Chat({
             showScrollToBottomButton={
               showScrollToBottomButton && Boolean(activeScrollContainer)
             }
-            submitButtonLabel={submitButtonLabel}
+            submitButtonLabel={isConversationLoading ? "불러오는 중..." : submitButtonLabel}
             onOpenProfileDialog={() => {
               handleOpenProfileDialog();
             }}

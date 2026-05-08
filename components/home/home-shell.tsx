@@ -21,6 +21,7 @@ import {
 import {
   toConversationPreview,
   type ChatMessage,
+  type ConversationPreview,
   type ConversationSession,
   type PromptTemplate,
 } from "@/lib/lumo-content";
@@ -33,7 +34,7 @@ import {
 
 interface HomeShellProps {
   featuredPrompts: PromptTemplate[];
-  initialConversations: ConversationSession[];
+  initialConversationPreviews: ConversationPreview[];
   initialProfiles: SavedProfileRecord[];
   initialActiveProfileIds: string[];
   initialProfile: string;
@@ -45,6 +46,11 @@ interface HomeShellProps {
 
 interface DeleteConversationResponse {
   success?: boolean;
+  error?: string;
+}
+
+interface GetConversationResponse {
+  conversation?: ConversationSession;
   error?: string;
 }
 
@@ -67,9 +73,32 @@ function createDraftConversation(
   };
 }
 
+function createPreviewPlaceholderConversation(
+  preview: ConversationPreview,
+  featuredPrompts: PromptTemplate[],
+  initialProfile: string,
+): ConversationSession {
+  const firstPrompt = featuredPrompts[0];
+
+  return {
+    ...preview,
+    profile: initialProfile ?? defaultChatProfile,
+    toneId: firstPrompt?.tone ?? "clear",
+    tools: firstPrompt?.tools ?? ["saju", "astrology"],
+    messages: [],
+  };
+}
+
+function upsertConversationPreview(
+  previews: ConversationPreview[],
+  nextPreview: ConversationPreview,
+): ConversationPreview[] {
+  return [nextPreview, ...previews.filter(({ id }) => id !== nextPreview.id)].slice(0, 12);
+}
+
 function HomeShell({
   featuredPrompts,
-  initialConversations,
+  initialConversationPreviews,
   initialProfiles,
   initialActiveProfileIds,
   initialProfile,
@@ -92,7 +121,8 @@ function HomeShell({
       window.removeEventListener("lumo:open-tutorial", handleOpenTutorial);
     };
   }, []);
-  const [conversations, setConversations] = useState(initialConversations);
+  const [conversationPreviews, setConversationPreviews] = useState(initialConversationPreviews);
+  const [loadedConversations, setLoadedConversations] = useState<ConversationSession[]>([]);
   const [savedProfiles, setSavedProfiles] = useState(initialProfiles);
   const [selectedSavedProfileIds, setSelectedSavedProfileIds] =
     useState(initialActiveProfileIds);
@@ -103,27 +133,53 @@ function HomeShell({
   const [activeConversationId, setActiveConversationId] = useState(
     initialSharedConversation?.id ?? draftConversation.id,
   );
+  const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [requestError, setRequestError] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const isConversationLoading = pendingConversationId === activeConversationId;
 
-  const activeConversation = useMemo(
-    () =>
-      (isSharedView && initialSharedConversation) ||
-      conversations.find(({ id }) => id === activeConversationId) ||
-      draftConversation,
-    [
-      activeConversationId,
-      conversations,
-      draftConversation,
-      initialSharedConversation,
-      isSharedView,
-    ],
-  );
+  const activeConversation = useMemo(() => {
+    if (isSharedView && initialSharedConversation) {
+      return initialSharedConversation;
+    }
 
-  const conversationPreviews = useMemo(
-    () => (isAuthenticated && !isSharedView ? conversations.map(toConversationPreview) : []),
-    [conversations, isAuthenticated, isSharedView],
+    if (activeConversationId === draftConversation.id) {
+      return draftConversation;
+    }
+
+    const loadedConversation = loadedConversations.find(
+      ({ id }) => id === activeConversationId,
+    );
+
+    if (loadedConversation) {
+      return loadedConversation;
+    }
+
+    const preview = conversationPreviews.find(({ id }) => id === activeConversationId);
+
+    if (preview) {
+      return createPreviewPlaceholderConversation(
+        preview,
+        featuredPrompts,
+        defaultProfileValue,
+      );
+    }
+
+    return draftConversation;
+  }, [
+    activeConversationId,
+    conversationPreviews,
+    defaultProfileValue,
+    draftConversation,
+    featuredPrompts,
+    initialSharedConversation,
+    isSharedView,
+    loadedConversations,
+  ]);
+  const visibleConversationPreviews = useMemo(
+    () => (isAuthenticated && !isSharedView ? conversationPreviews : []),
+    [conversationPreviews, isAuthenticated, isSharedView],
   );
 
   const upsertMessageContent = useCallback(
@@ -220,9 +276,13 @@ function HomeShell({
         return;
       }
 
-      setConversations((currentConversations) =>
-        currentConversations.map((conversation) =>
-          conversation.id === nextConversation.id ? nextConversation : conversation,
+      setLoadedConversations((currentConversations) =>
+        upsertConversation(currentConversations, nextConversation),
+      );
+      setConversationPreviews((currentConversationPreviews) =>
+        upsertConversationPreview(
+          currentConversationPreviews,
+          toConversationPreview(nextConversation),
         ),
       );
     },
@@ -234,6 +294,7 @@ function HomeShell({
 
     setDraftConversation(nextDraftConversation);
     setActiveConversationId(nextDraftConversation.id);
+    setPendingConversationId(null);
     setRequestError("");
   }, [defaultProfileValue, featuredPrompts]);
 
@@ -248,10 +309,62 @@ function HomeShell({
         return;
       }
 
+      if (conversationId === activeConversationId) {
+        setRequestError("");
+        return;
+      }
+
+      const loadedConversation = loadedConversations.find(({ id }) => id === conversationId);
+
+      if (loadedConversation) {
+        setPendingConversationId(null);
+        setActiveConversationId(conversationId);
+        setRequestError("");
+        return;
+      }
+
+      const previousConversationId = activeConversationId;
+
       setActiveConversationId(conversationId);
+      setPendingConversationId(conversationId);
       setRequestError("");
+
+      const loadConversation = async () => {
+        try {
+          const response = await fetch(`/api/conversations/${conversationId}`);
+          const data = (await response.json()) as GetConversationResponse;
+
+          if (!response.ok || !data.conversation) {
+            throw new Error(data.error ?? "채팅을 불러오지 못했습니다.");
+          }
+
+          setLoadedConversations((currentConversations) =>
+            upsertConversation(currentConversations, data.conversation as ConversationSession),
+          );
+          setConversationPreviews((currentConversationPreviews) =>
+            upsertConversationPreview(
+              currentConversationPreviews,
+              toConversationPreview(data.conversation as ConversationSession),
+            ),
+          );
+          setRequestError("");
+        } catch (error) {
+          setActiveConversationId(previousConversationId);
+          setRequestError(
+            error instanceof Error ? error.message : "채팅을 불러오는 중 오류가 발생했습니다.",
+          );
+        } finally {
+          setPendingConversationId((currentPendingConversationId) =>
+            currentPendingConversationId === conversationId
+              ? null
+              : currentPendingConversationId,
+          );
+        }
+      };
+
+      loadConversation().catch(() => undefined);
     },
-    [isAuthenticated, isSharedView],
+    [activeConversationId, isAuthenticated, isSharedView, loadedConversations],
   );
 
   const handleDeleteConversation = useCallback(
@@ -270,27 +383,26 @@ function HomeShell({
         throw new Error(data.error ?? "채팅 삭제에 실패했습니다.");
       }
 
-      setConversations((currentConversations) => {
-        const nextConversations = currentConversations.filter(
+      setLoadedConversations((currentConversations) =>
+        currentConversations.filter((conversation) => conversation.id !== conversationId),
+      );
+      setConversationPreviews((currentConversationPreviews) =>
+        currentConversationPreviews.filter(
           (conversation) => conversation.id !== conversationId,
+        ),
+      );
+
+      if (activeConversationId === conversationId) {
+        const nextDraftConversation = createDraftConversation(
+          featuredPrompts,
+          defaultProfileValue,
         );
 
-        if (activeConversationId === conversationId) {
-          if (nextConversations[0]) {
-            setActiveConversationId(nextConversations[0].id);
-          } else {
-            const nextDraftConversation = createDraftConversation(
-              featuredPrompts,
-              defaultProfileValue,
-            );
+        setDraftConversation(nextDraftConversation);
+        setActiveConversationId(nextDraftConversation.id);
+        setPendingConversationId(null);
+      }
 
-            setDraftConversation(nextDraftConversation);
-            setActiveConversationId(nextDraftConversation.id);
-          }
-        }
-
-        return nextConversations;
-      });
       setRequestError("");
     },
     [activeConversationId, defaultProfileValue, featuredPrompts, isAuthenticated],
@@ -498,11 +610,20 @@ function HomeShell({
         return;
       }
 
-      setConversations((currentConversations) =>
+      setLoadedConversations((currentConversations) =>
         currentConversations.map((currentConversation) =>
           currentConversation.id === conversation.id
             ? updateMessageFollowUps(currentConversation, assistantMessage.id, suggestions)
             : currentConversation,
+        ),
+      );
+      setConversationPreviews((currentConversationPreviews) =>
+        currentConversationPreviews.map((currentConversationPreview) =>
+          currentConversationPreview.id === conversation.id
+            ? toConversationPreview(
+                updateMessageFollowUps(conversation, assistantMessage.id, suggestions),
+              )
+            : currentConversationPreview,
         ),
       );
       setDraftConversation((currentConversation) =>
@@ -518,6 +639,10 @@ function HomeShell({
     async (draft: ChatComposerDraft): Promise<void> => {
       if (!isAuthenticated) {
         setIsLoginModalOpen(true);
+        return;
+      }
+
+      if (isConversationLoading) {
         return;
       }
 
@@ -632,10 +757,17 @@ function HomeShell({
           if (payload.type === "done") {
             streamedConversation = removePendingToolMessages(streamedConversation);
             updateActiveConversation(streamedConversation);
-            setConversations((currentConversations) =>
+            setLoadedConversations((currentConversations) =>
               upsertConversation(currentConversations, payload.conversation),
             );
+            setConversationPreviews((currentConversationPreviews) =>
+              upsertConversationPreview(
+                currentConversationPreviews,
+                toConversationPreview(payload.conversation),
+              ),
+            );
             setActiveConversationId(payload.conversation.id);
+            setPendingConversationId(null);
             setRequestError("");
             requestFollowUpSuggestions(payload.conversation, draft.question).catch(
               () => undefined,
@@ -694,6 +826,7 @@ function HomeShell({
       activeConversation,
       appendToolMessage,
       ensurePendingAssistantMessage,
+      isConversationLoading,
       isAuthenticated,
       removePendingToolMessages,
       requestFollowUpSuggestions,
@@ -744,7 +877,7 @@ function HomeShell({
             {!isSharedView ? (
               <Sidebar
                 activeConversationId={activeConversationId}
-                conversations={conversationPreviews}
+                conversations={visibleConversationPreviews}
                 kakaoReady={kakaoReady}
                 session={session}
                 onDeleteConversation={handleDeleteConversation}
@@ -762,6 +895,7 @@ function HomeShell({
                   featuredPrompts={featuredPrompts}
                   initialProfile={initialProfile}
                   isAuthenticated={isAuthenticated}
+                  isConversationLoading={isConversationLoading}
                   isReadOnly={isSharedView}
                   kakaoReady={kakaoReady}
                   isSending={isSending}
