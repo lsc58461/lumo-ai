@@ -537,8 +537,15 @@ function HomeShell({
       }
 
       const nextProfiles = data.profiles ?? [];
-      const nextActiveProfileIds = normalizeProfileIds(
+      const resolvedActiveProfileIds = normalizeProfileIds(
         data.activeProfileIds ?? (data.activeProfileId ? [data.activeProfileId] : []),
+      );
+      const fallbackActiveProfileId =
+        resolvedActiveProfileIds.length === 0
+          ? nextProfiles.find((savedProfile) => savedProfile.value === profile)?.id
+          : undefined;
+      const nextActiveProfileIds = normalizeProfileIds(
+        fallbackActiveProfileId ? [fallbackActiveProfileId] : resolvedActiveProfileIds,
       );
       const nextSelectedProfiles = resolveSavedProfileValues(
         nextProfiles,

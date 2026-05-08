@@ -222,6 +222,14 @@ function activateElement(element: HTMLElement): void {
   element.click();
 }
 
+function shouldSkipProfileListSteps(): boolean {
+  const hasProfileForm = document.querySelector('[data-tutorial="profile-form"]') !== null;
+  const hasAddProfileButton =
+    document.querySelector('[data-tutorial="add-profile-btn"]') !== null;
+
+  return hasProfileForm && !hasAddProfileButton;
+}
+
 function ProfilePreview({ compact = false }: { compact?: boolean }) {
   const fields = ["이름", "생년월일", "출생 시간", "출생지", "성별", "음력 / 양력"];
   const previewFields = compact ? fields.slice(0, 4) : fields;
@@ -287,6 +295,20 @@ function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
     }
   }, []);
 
+  const moveToStep = useCallback((nextStepId: string | undefined) => {
+    if (!nextStepId) {
+      setStep((current) => current + 1);
+      return;
+    }
+
+    const nextStepIndex = tutorialSteps.findIndex(
+      (tutorialStep) => tutorialStep.id === nextStepId,
+    );
+    if (nextStepIndex >= 0) {
+      setStep(nextStepIndex);
+    }
+  }, []);
+
   const syncStepUi = useCallback(
     (stepData: TutorialStepDef) => {
       switch (stepData.id) {
@@ -300,6 +322,11 @@ function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
           return;
         }
         case "profile-dialog": {
+          if (shouldSkipProfileListSteps()) {
+            moveToStep("profile-form");
+            return;
+          }
+
           if (!isStepPresent(stepData, { allowTargetOnly: true })) {
             const profileButton = document.querySelector<HTMLElement>(
               '[data-tutorial="profile-btn"]',
@@ -311,6 +338,11 @@ function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
           return;
         }
         case "add-profile-button": {
+          if (shouldSkipProfileListSteps()) {
+            moveToStep("profile-form");
+            return;
+          }
+
           if (isStepPresent(stepData, { allowTargetOnly: true })) {
             return;
           }
@@ -388,7 +420,7 @@ function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
           break;
       }
     },
-    [closeOpenDropdowns, closeProfileDialog, sendEscape],
+    [closeOpenDropdowns, closeProfileDialog, moveToStep, sendEscape],
   );
 
   useEffect(() => {
@@ -401,20 +433,6 @@ function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
 
     delete document.body.dataset.lumoTutorialOpen;
   }, [open]);
-
-  const moveToStep = useCallback((nextStepId: string | undefined) => {
-    if (!nextStepId) {
-      setStep((current) => current + 1);
-      return;
-    }
-
-    const nextStepIndex = tutorialSteps.findIndex(
-      (tutorialStep) => tutorialStep.id === nextStepId,
-    );
-    if (nextStepIndex >= 0) {
-      setStep(nextStepIndex);
-    }
-  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -509,6 +527,13 @@ function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
       }
 
       activateElement(targetElement);
+
+      if (currentStep.id === "profile-button" && shouldSkipProfileListSteps()) {
+        window.setTimeout(() => {
+          moveToStep("profile-form");
+        }, currentStep.nextDelayMs ?? 220);
+        return;
+      }
 
       const nextStep = tutorialSteps.find(
         (tutorialStep) => tutorialStep.id === currentStep.nextStepId,

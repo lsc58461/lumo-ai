@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
+import { CHAT_STREAM_JOBS_COLLECTION } from "@/lib/chat-stream";
 import { CONVERSATIONS_COLLECTION } from "@/lib/conversation-collection";
 import { getMongoDatabase, isMongoConfigured } from "@/lib/mongodb";
 
@@ -35,7 +36,9 @@ export async function DELETE() {
 
     await Promise.all([
       database.collection("userProfiles").deleteMany({ userId }),
+      database.collection("savedProfiles").deleteMany({ userId }),
       database.collection(CONVERSATIONS_COLLECTION).deleteMany({ userId }),
+      database.collection(CHAT_STREAM_JOBS_COLLECTION).deleteMany({ userId }),
       database.collection("sharedConversationSnapshots").deleteMany({ userId }),
       database.collection("accounts").deleteMany(userIdQuery),
       database.collection("sessions").deleteMany(userIdQuery),
