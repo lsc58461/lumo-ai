@@ -709,6 +709,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    const requestTimestamp = new Date().toISOString();
     const sanitizedMessages = body.messages
       .filter(({ content }) => content.trim().length > 0)
       .map((message) => ({
@@ -750,6 +751,7 @@ export async function POST(request: Request) {
 
           const prompt = buildLumoChatPrompt({
             ...body,
+            requestTimestamp,
             messages: [
               ...toolRunResult.promptMessages.map(({ message }) => toMessageDocument(message)),
               ...sanitizedMessages,

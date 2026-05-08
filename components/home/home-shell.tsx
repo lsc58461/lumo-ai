@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import type { Session } from "next-auth";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import Chat, { type ChatComposerDraft } from "@/components/home/chat";
 import LoginModal from "@/components/home/login-modal";
 import Sidebar from "@/components/home/sidebar";
+import TutorialOverlay from "@/components/home/tutorial-modal";
 import { Button } from "@/components/ui/button";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import {
@@ -78,6 +79,19 @@ function HomeShell({
   session,
 }: HomeShellProps) {
   const isAuthenticated = Boolean(session?.user);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+
+  useEffect(() => {
+    const handleOpenTutorial = () => {
+      setIsTutorialOpen(true);
+    };
+
+    window.addEventListener("lumo:open-tutorial", handleOpenTutorial);
+
+    return () => {
+      window.removeEventListener("lumo:open-tutorial", handleOpenTutorial);
+    };
+  }, []);
   const [conversations, setConversations] = useState(initialConversations);
   const [savedProfiles, setSavedProfiles] = useState(initialProfiles);
   const [selectedSavedProfileIds, setSelectedSavedProfileIds] =
@@ -773,6 +787,13 @@ function HomeShell({
           </div>
         </SidebarProvider>
       </div>
+
+      <TutorialOverlay
+        open={isTutorialOpen}
+        onClose={() => {
+          setIsTutorialOpen(false);
+        }}
+      />
     </>
   );
 }

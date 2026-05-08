@@ -24,14 +24,35 @@ interface ChatStore {
   toggleTool: (toolKey: ToolKey) => void;
 }
 
+function getStoredDefaultTone(fallback: ToneId): ToneId {
+  if (typeof window === "undefined") return fallback;
+  return (localStorage.getItem("lumo:default-tone") as ToneId) ?? fallback;
+}
+
+function getStoredDefaultTools(fallback: ToolKey[]): ToolKey[] {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = localStorage.getItem("lumo:default-tools");
+    if (stored) {
+      const parsed = JSON.parse(stored) as ToolKey[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return fallback;
+}
+
 function getDraftState(prompts: PromptTemplate[], initialProfile?: string) {
   const firstPrompt = prompts[0];
+  const promptTone: ToneId = firstPrompt?.tone ?? "clear";
+  const promptTools: ToolKey[] = firstPrompt?.tools ?? ["saju", "astrology"];
 
   return {
     initialized: true,
     profile: initialProfile ?? defaultChatProfile,
-    selectedToneId: firstPrompt?.tone ?? "clear",
-    selectedTools: firstPrompt?.tools ?? ["saju", "astrology"],
+    selectedToneId: getStoredDefaultTone(promptTone),
+    selectedTools: getStoredDefaultTools(promptTools),
     question: defaultChatQuestion,
   };
 }

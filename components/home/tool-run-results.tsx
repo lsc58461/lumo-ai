@@ -23,12 +23,12 @@ const elementClassName = {
 } as const;
 
 const badgeToneClassName = {
-  amber: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
+  amber: "border-amber-300/20 bg-amber-300/10 text-amber-100",
   cyan: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
   emerald: "border-emerald-300/20 bg-emerald-300/10 text-emerald-100",
   rose: "border-rose-300/20 bg-rose-300/10 text-rose-100",
   violet: "border-violet-300/20 bg-violet-300/10 text-violet-100",
-  slate: "border-white/10 bg-white/[0.04] text-zinc-200",
+  slate: "border-white/10 bg-white/4 text-zinc-200",
 } as const;
 
 function PreviewBadge({ badge }: { badge: ToolPreviewBadge }) {
@@ -253,7 +253,7 @@ function ToolRunResults({ toolResults }: ToolRunResultsProps) {
             <span>분석 완료</span>
             <span className="break-all text-emerald-100/75">({result.args})</span>
           </div>
-          <p className="rounded-[20px] border border-white/10 bg-white/3 px-3 py-2 text-[13px] leading-6 wrap-break-word text-zinc-300 md:rounded-[24px] md:px-4 md:py-3 md:text-sm">
+          <p className="rounded-[20px] border border-white/10 bg-white/4 px-3 py-2 text-[13px] leading-6 wrap-break-word text-zinc-300 md:rounded-[24px] md:px-4 md:py-3 md:text-sm">
             {result.summary}
           </p>
           <ToolPreview result={result} />

@@ -12,6 +12,7 @@ import {
   Compass,
   Copy,
   Link2,
+  Loader2,
   MessageCircleMore,
   MessageSquareText,
   Paintbrush,
@@ -376,6 +377,128 @@ interface ChatProps {
   onFollowUpSelect: (question: string) => Promise<void>;
 }
 
+function ToolMessageBubble({
+  message,
+}: {
+  message: ConversationSession["messages"][number] & { role: "tool" };
+}) {
+  const [isOpen, setIsOpen] = useState(true);
+  const isPending = message.pending;
+  const hasResults = Boolean(message.toolResults?.length);
+  const hasContent = Boolean(message.content);
+
+  const toolLabels = useMemo(() => {
+    if (!message.toolResults?.length) return [];
+    const seen = new Set<string>();
+    return message.toolResults
+      .map((r) => toolCatalog[r.toolKey]?.label ?? r.toolKey)
+      .filter((label) => {
+        if (seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+  }, [message.toolResults]);
+
+  return (
+    <article className="w-full max-w-240 min-w-0 rounded-[24px] border border-cyan-300/15 bg-linear-to-br from-cyan-300/12 to-cyan-300/5 px-4 py-4 text-cyan-50 shadow-lg shadow-black/10 transition-all duration-500 md:px-5">
+      <button
+        type="button"
+        className="flex w-full flex-wrap items-center gap-2 text-left"
+        onClick={() => setIsOpen((v) => !v)}
+      >
+        <span className="rounded-full border border-cyan-300/20 bg-cyan-300/12 px-2.5 py-1 text-[10px] font-semibold tracking-[0.22em] text-cyan-100/80 uppercase">
+          단계별 도구 분석
+        </span>
+        {isPending ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-black/10 px-2.5 py-1 text-[11px] text-cyan-100/85">
+            <Loader2 className="size-3 animate-spin text-cyan-300" />
+            분석중
+          </span>
+        ) : (
+          <>
+            {toolLabels.map((label) => (
+              <span
+                key={label}
+                className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[10px] font-medium text-cyan-200/80"
+              >
+                {label}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/15 bg-black/10 px-2.5 py-1 text-[11px] text-cyan-100/80">
+              완료
+            </span>
+          </>
+        )}
+        <span className="ml-auto text-cyan-300/60">
+          <ChevronDown
+            className={cn(
+              "size-4 transition-transform duration-300",
+              isOpen ? "rotate-0" : "-rotate-90",
+            )}
+          />
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="animate-in fade-in slide-in-from-top-1 duration-300">
+          {isPending && !hasResults && (
+            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-3">
+              <div className="rounded-2xl border border-cyan-300/25 bg-cyan-300/8 px-3 py-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex size-2">
+                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-cyan-300 opacity-60" />
+                    <span className="relative inline-flex size-2 rounded-full bg-cyan-300" />
+                  </span>
+                  <div className="text-[10px] tracking-[0.18em] text-cyan-100/70 uppercase">
+                    Step 1 · 진행중
+                  </div>
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  <div className="h-2 w-3/4 animate-pulse rounded-full bg-cyan-300/30" />
+                  <div
+                    className="h-2 w-1/2 animate-pulse rounded-full bg-cyan-300/20"
+                    style={{ animationDelay: "200ms" }}
+                  />
+                </div>
+              </div>
+              <div className="hidden h-px bg-cyan-300/18 md:block" />
+              <div className="rounded-2xl border border-white/8 bg-white/3 px-3 py-2.5 text-zinc-500">
+                <div className="text-[10px] tracking-[0.18em] text-zinc-600 uppercase">
+                  Step 2 · 대기중
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  <div className="h-2 w-2/3 rounded-full bg-white/8" />
+                  <div className="h-2 w-2/5 rounded-full bg-white/5" />
+                </div>
+              </div>
+            </div>
+          )}
+          {isPending && (
+            <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-black/20">
+              <div className="absolute inset-y-0 w-1/3 animate-[tool-loading-bar_1.8s_ease-in-out_infinite] rounded-full bg-linear-to-r from-transparent via-cyan-300/90 to-transparent" />
+            </div>
+          )}
+          {hasResults && (
+            <div
+              className={cn(
+                "mt-3",
+                isPending && "animate-in fade-in slide-in-from-bottom-1 duration-500",
+              )}
+            >
+              <ToolRunResults toolResults={message.toolResults!} />
+            </div>
+          )}
+          {!hasResults && hasContent && (
+            <p className="mt-3 text-sm leading-7 wrap-break-word whitespace-pre-wrap md:text-[15px]">
+              {message.content}
+            </p>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function Chat({
   activeConversation,
   availableProfiles,
@@ -473,6 +596,26 @@ function Chat({
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileDraft, setProfileDraft] = useState<ChatProfileFields>(defaultChatProfileFields);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    const handleTutorialCloseProfileDialog = () => {
+      setIsProfileDialogOpen(false);
+      setIsAddingProfile(false);
+      setEditingProfileId(null);
+    };
+
+    window.addEventListener(
+      "lumo:tutorial-close-profile-dialog",
+      handleTutorialCloseProfileDialog,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "lumo:tutorial-close-profile-dialog",
+        handleTutorialCloseProfileDialog,
+      );
+    };
+  }, []);
+
   const [shareError, setShareError] = useState("");
   const [shareUrl, setShareUrl] = useState("");
   const [messageScrollContainer, setMessageScrollContainer] = useState<HTMLDivElement | null>(
@@ -809,58 +952,11 @@ function Chat({
 
   const renderMessageBody = useCallback(
     (message: ConversationSession["messages"][number]) => {
-      if (message.role === "tool" && message.pending) {
-        return (
-          <article className="w-full max-w-160 min-w-0 rounded-[24px] border border-cyan-300/15 bg-linear-to-br from-cyan-300/12 to-cyan-300/5 px-4 py-4 text-cyan-50 shadow-lg shadow-black/10 transition-all duration-500 md:px-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-cyan-300/20 bg-cyan-300/12 px-2.5 py-1 text-[10px] font-semibold tracking-[0.22em] text-cyan-100/80 uppercase">
-                단계별 도구 분석
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/15 bg-black/10 px-2.5 py-1 text-[11px] text-cyan-100/85">
-                <span className="size-1.5 animate-pulse rounded-full bg-cyan-300" />
-                분석중
-              </span>
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-3">
-              <div className="rounded-2xl border border-cyan-300/18 bg-black/10 px-3 py-2.5">
-                <div className="text-[10px] tracking-[0.18em] text-cyan-100/55 uppercase">
-                  Step 1
-                </div>
-                <p className="mt-1 text-sm font-medium text-cyan-50">도구 분석중</p>
-              </div>
-              <div className="hidden h-px bg-cyan-300/18 md:block" />
-              <div className="rounded-2xl border border-white/10 bg-white/3 px-3 py-2.5 text-zinc-400">
-                <div className="text-[10px] tracking-[0.18em] text-zinc-500 uppercase">
-                  Step 2
-                </div>
-                <p className="mt-1 text-sm">분석 완료 후 결과 정리</p>
-              </div>
-            </div>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/15">
-              <div className="h-full w-2/5 animate-pulse rounded-full bg-cyan-300/80 transition-all duration-700" />
-            </div>
-          </article>
-        );
-      }
-
-      if (message.role === "tool" && message.toolResults?.length) {
-        return (
-          <article className="w-full max-w-240 min-w-0 overflow-hidden bg-transparent py-1">
-            <ToolRunResults toolResults={message.toolResults} />
-          </article>
-        );
-      }
-
       if (message.role === "tool") {
         return (
-          <article className="w-full max-w-240 min-w-0 rounded-2xl border border-cyan-300/15 bg-cyan-300/10 px-5 py-4 text-cyan-50 shadow-lg shadow-black/10">
-            <div className="mb-3 text-[11px] font-semibold tracking-[0.24em] text-cyan-100/70 uppercase">
-              단계별 도구 분석
-            </div>
-            <p className="text-sm leading-7 wrap-break-word whitespace-pre-wrap md:text-[15px]">
-              {message.content}
-            </p>
-          </article>
+          <ToolMessageBubble
+            message={message as ConversationSession["messages"][number] & { role: "tool" }}
+          />
         );
       }
 
@@ -959,7 +1055,7 @@ function Chat({
                         </Badge>
                         <div className="mt-4">
                           <div className="text-[11px] font-semibold tracking-[0.24em] text-zinc-500 uppercase">
-                            Lumo AI Chat
+                            루모 AI 채팅
                           </div>
                           <h2 className="font-display mt-2 text-2xl leading-tight tracking-tight wrap-break-word text-white md:mt-3 md:text-4xl">
                             {activeConversation.title}
@@ -996,49 +1092,47 @@ function Chat({
           ) : (
             <div
               ref={setEmptyStateScrollContainer}
-              className="flex h-full min-h-0 w-full min-w-0 flex-col items-center justify-start overflow-y-auto rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)] px-3 py-5 text-center md:justify-center md:py-8"
+              className="flex h-full min-h-0 w-full min-w-0 overflow-y-auto rounded-[28px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_42%),rgba(255,255,255,0.03)]"
             >
-              <Badge
-                variant="outline"
-                className="border-cyan-300/15 bg-cyan-300/10 px-2.5 py-0.5 text-[11px] text-cyan-100 md:px-3 md:py-1"
-              >
-                <MessageSquareText className="size-4" />한 줄 질문으로 바로 시작
-              </Badge>
-              <h1 className="font-display mt-6 text-3xl leading-[0.98] tracking-tight text-white sm:text-4xl xl:text-5xl">
-                루모 AI에게
-                <br />
-                오늘의 흐름을 물어보세요.
-              </h1>
-              <p className="mt-4 max-w-xl text-xs leading-5 text-zinc-500 sm:text-base sm:leading-6">
-                호흡은 간결하게, 해석은 또렷하게. 연애, 진로, 궁합, 재물처럼 지금 마음에 걸린
-                질문을 채팅으로 이어가세요.
-              </p>
+              <div className="mx-auto my-auto flex w-full max-w-3xl flex-col items-center px-3 py-6 text-center">
+                <Badge
+                  variant="outline"
+                  className="border-cyan-300/15 bg-cyan-300/10 px-2.5 py-0.5 text-[11px] text-cyan-100"
+                >
+                  <MessageSquareText className="size-3.5" />한 줄 질문으로 바로 시작
+                </Badge>
+                <h1 className="font-display mt-3 text-2xl leading-tight tracking-tight text-white sm:text-3xl">
+                  루모 AI에게 오늘의 흐름을 물어보세요.
+                </h1>
+                <p className="mt-2 max-w-lg text-xs leading-5 text-zinc-500">
+                  호흡은 간결하게, 해석은 또렷하게. 연애, 진로, 궁합, 재물처럼 지금 마음에 걸린
+                  질문을 채팅으로 이어가세요.
+                </p>
 
-              <div className="mt-5 grid w-full max-w-4xl min-w-0 grid-cols-1 gap-2.5 md:mt-6 md:grid-cols-2 md:gap-3">
-                {featuredPrompts.slice(0, 4).map((prompt) => (
-                  <button
-                    key={prompt.id}
-                    type="button"
-                    className="rounded-[24px] border border-white/10 bg-white/4 p-4 text-left transition-colors hover:bg-white/[0.07] md:rounded-[28px] md:p-5"
-                    onClick={() => {
-                      applyPrompt(prompt);
-                    }}
-                  >
-                    <span className="text-xs font-semibold tracking-[0.22em] text-zinc-500 uppercase">
-                      {prompt.category}
-                    </span>
-                    <strong className="mt-2 block text-base font-semibold text-white">
-                      {prompt.title}
-                    </strong>
-                    <span className="mt-1 block text-sm leading-6 text-zinc-400">
-                      {prompt.summary}
-                    </span>
-                  </button>
-                ))}
-              </div>
+                <div className="mt-4 grid w-full min-w-0 grid-cols-1 gap-2 md:grid-cols-2">
+                  {featuredPrompts.slice(0, 4).map((prompt) => (
+                    <button
+                      key={prompt.id}
+                      type="button"
+                      className="rounded-[20px] border border-white/10 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/[0.07]"
+                      onClick={() => {
+                        applyPrompt(prompt);
+                      }}
+                    >
+                      <span className="text-[10px] font-semibold tracking-[0.22em] text-zinc-500 uppercase">
+                        {prompt.category}
+                      </span>
+                      <strong className="mt-1 block text-sm font-semibold text-white">
+                        {prompt.title}
+                      </strong>
+                      <span className="mt-0.5 block text-xs leading-5 text-zinc-400">
+                        {prompt.summary}
+                      </span>
+                    </button>
+                  ))}
+                </div>
 
-              <div className="mt-auto px-1 pt-6 text-center text-[11px] text-zinc-500 md:text-xs">
-                {helperText}
+                <div className="pt-4 text-center text-[11px] text-zinc-500">{helperText}</div>
               </div>
             </div>
           )}
@@ -1081,6 +1175,7 @@ function Chat({
               <div className="relative">
                 <Textarea
                   aria-label="채팅 질문 입력"
+                  data-tutorial="composer"
                   className="field-sizing-fixed h-18 max-h-18 resize-none overflow-y-auto rounded-[18px] border border-white/10 bg-[#12141d] px-3 pt-2 pr-10 pb-12 text-[14px] leading-6 text-zinc-100 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-zinc-500 focus-visible:ring-0 focus-visible:ring-offset-0 md:h-20 md:max-h-20 md:rounded-[22px] md:px-4 md:pt-3 md:pb-12 md:text-[15px] [&::-webkit-scrollbar]:hidden"
                   rows={2}
                   maxLength={140}
@@ -1117,6 +1212,7 @@ function Chat({
                       <Button
                         type="button"
                         variant="ghost"
+                        data-tutorial="tools-btn"
                         className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
                       >
                         <Compass className="size-4" />
@@ -1125,6 +1221,7 @@ function Chat({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="start"
+                      data-tutorial="tools-menu"
                       className="w-72 border-white/10 bg-[#12141d] text-zinc-100"
                     >
                       <DropdownMenuLabel>도구 선택</DropdownMenuLabel>
@@ -1164,23 +1261,38 @@ function Chat({
                     </DropdownMenuContent>
                   </DropdownMenu>
 
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
-                    onClick={() => {
-                      handleOpenProfileDialog();
-                    }}
-                  >
-                    <UserRound className="size-4" />
-                    프로필 + {selectedProfileIds.length}
-                  </Button>
+                  {isAuthenticated ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      data-tutorial="profile-btn"
+                      className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
+                      onClick={() => {
+                        handleOpenProfileDialog();
+                      }}
+                    >
+                      <UserRound className="size-4" />
+                      프로필 + {selectedProfileIds.length}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      data-tutorial="profile-btn"
+                      className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
+                      onClick={onRequestLogin}
+                    >
+                      <UserRound className="size-4" />
+                      프로필 + {selectedProfileIds.length}
+                    </Button>
+                  )}
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         type="button"
                         variant="ghost"
+                        data-tutorial="tone-btn"
                         className="h-7 rounded-full px-2 text-[12px] text-zinc-200 hover:bg-white/6 hover:text-white md:h-9 md:px-2.5 md:text-sm"
                       >
                         <Paintbrush className="size-4" />
@@ -1190,6 +1302,7 @@ function Chat({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="start"
+                      data-tutorial="tone-menu"
                       className="w-72 border-white/10 bg-[#12141d] text-zinc-100"
                     >
                       <DropdownMenuLabel>상담 톤</DropdownMenuLabel>
@@ -1236,7 +1349,20 @@ function Chat({
             }
           }}
         >
-          <DialogContent className="border-white/10 bg-[#12141d] text-zinc-100 sm:max-w-xl">
+          <DialogContent
+            data-tutorial="profile-dialog"
+            className="border-white/10 bg-[#12141d] text-zinc-100 sm:max-w-xl"
+            onInteractOutside={(event) => {
+              if (document.body.dataset.lumoTutorialOpen === "true") {
+                event.preventDefault();
+              }
+            }}
+            onPointerDownOutside={(event) => {
+              if (document.body.dataset.lumoTutorialOpen === "true") {
+                event.preventDefault();
+              }
+            }}
+          >
             <DialogHeader>
               <DialogTitle>출생 프로필</DialogTitle>
               <DialogDescription className="text-zinc-400">
@@ -1264,7 +1390,7 @@ function Chat({
                             selectedProfileIds.length >= 2
                           }
                           className={cn(
-                            "h-auto min-h-11 min-w-0 flex-1 justify-between rounded-[18px] border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-zinc-100 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50",
+                            "h-auto min-h-11 min-w-0 flex-1 justify-between rounded-[18px] border-white/10 bg-black/20 px-3 py-2 text-left text-zinc-100 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50",
                             selectedProfileIds.includes(savedProfileOption.id) &&
                               "border-cyan-300/40 bg-cyan-400/10 text-zinc-50 shadow-[0_0_0_1px_rgba(103,232,249,0.15)]",
                           )}
@@ -1282,27 +1408,27 @@ function Chat({
                         <Button
                           type="button"
                           variant="outline"
-                          className="h-auto shrink-0 rounded-[18px] border-white/10 bg-black/20 px-2.5 text-xs text-zinc-300 hover:bg-white/8 hover:text-white"
+                          size="icon"
+                          className="size-8 shrink-0 rounded-[14px] border-white/10 bg-black/20 text-zinc-300 hover:bg-white/8 hover:text-white"
                           aria-label="프로필 수정"
                           onClick={() => {
                             handleEditSavedProfile(savedProfileOption.id);
                           }}
                         >
                           <Pencil className="size-4" />
-                          <span className="hidden sm:inline">수정</span>
                         </Button>
                         <Button
                           type="button"
                           variant="outline"
+                          size="icon"
                           disabled={isDeletingProfile}
-                          className="h-auto shrink-0 rounded-[18px] border-white/10 bg-black/20 px-2.5 text-xs text-zinc-300 hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          className="size-8 shrink-0 rounded-[14px] border-white/10 bg-black/20 text-zinc-300 hover:bg-rose-400/15 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label="프로필 삭제"
                           onClick={() => {
                             setPendingDeleteProfileValue(savedProfileOption.id);
                           }}
                         >
                           <Trash2 className="size-4" />
-                          <span className="hidden sm:inline">삭제</span>
                         </Button>
                       </div>
                     ))}
@@ -1312,6 +1438,7 @@ function Chat({
                 <DialogFooter>
                   <Button
                     type="button"
+                    data-tutorial="add-profile-btn"
                     className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
                     onClick={() => {
                       setEditingProfileId(null);
@@ -1324,7 +1451,7 @@ function Chat({
                 </DialogFooter>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div data-tutorial="profile-form" className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-medium text-zinc-200">

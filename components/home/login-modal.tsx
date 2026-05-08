@@ -39,7 +39,7 @@ function LoginModal({ kakaoReady, open, onOpenChange }: LoginModalProps) {
               variant="outline"
               className="w-fit border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[11px] tracking-[0.24em] text-cyan-100 uppercase"
             >
-              Login Required
+              로그인 필요
             </Badge>
             <div className="space-y-1">
               <DialogTitle className="font-display text-[24px] tracking-tight text-white sm:text-[26px]">

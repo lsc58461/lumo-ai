@@ -1,10 +1,18 @@
 "use client";
 
-import { BadgeCheck, ChevronsUpDown, HandHeart, LogOut } from "lucide-react";
+import {
+  BadgeCheck,
+  BookOpen,
+  Check,
+  ChevronsUpDown,
+  HandHeart,
+  LogOut,
+  Settings,
+} from "lucide-react";
 import type { Session } from "next-auth";
 import { signOut } from "next-auth/react";
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -31,6 +39,141 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  toneOptions,
+  toolCatalog,
+  toolSelectionKeys,
+  type ToneId,
+  type ToolKey,
+} from "@/lib/lumo-content";
+import { cn } from "@/lib/utils";
+
+import { isTutorialSeen } from "./tutorial-modal";
+
+// ── Settings Tabs ──────────────────────────────────────────────────────────────
+
+interface SettingsTabsProps {
+  defaultToneId: ToneId;
+  defaultTools: ToolKey[];
+  onToneChange: (toneId: ToneId) => void;
+  onToolToggle: (toolKey: ToolKey) => void;
+}
+
+function SettingsTabs({
+  defaultToneId,
+  defaultTools,
+  onToneChange,
+  onToolToggle,
+}: SettingsTabsProps) {
+  const [activeTab, setActiveTab] = useState<"tools" | "tone">("tools");
+
+  return (
+    <div className="space-y-3">
+      {/* Tab bar */}
+      <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+        <button
+          type="button"
+          className={cn(
+            "flex-1 rounded-xl py-1.5 text-sm font-medium transition-colors",
+            activeTab === "tools"
+              ? "bg-white/10 text-zinc-100"
+              : "text-zinc-500 hover:text-zinc-300",
+          )}
+          onClick={() => {
+            setActiveTab("tools");
+          }}
+        >
+          기본 도구
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "flex-1 rounded-xl py-1.5 text-sm font-medium transition-colors",
+            activeTab === "tone"
+              ? "bg-white/10 text-zinc-100"
+              : "text-zinc-500 hover:text-zinc-300",
+          )}
+          onClick={() => {
+            setActiveTab("tone");
+          }}
+        >
+          기본 톤
+        </button>
+      </div>
+
+      {/* Tools tab */}
+      {activeTab === "tools" ? (
+        <div className="space-y-1 rounded-2xl border border-white/10 bg-black/20 p-1">
+          {toolSelectionKeys.map((toolKey) => {
+            const tool = toolCatalog[toolKey];
+            const isSelected = defaultTools.includes(toolKey);
+            return (
+              <button
+                key={toolKey}
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+                  isSelected
+                    ? "bg-cyan-300/12 text-zinc-100"
+                    : "text-zinc-400 hover:bg-white/6 hover:text-zinc-200",
+                )}
+                onClick={() => {
+                  onToolToggle(toolKey);
+                }}
+              >
+                <span className="flex size-4 shrink-0 items-center justify-center">
+                  {isSelected ? <Check className="size-3.5 text-cyan-300" /> : null}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium">{tool.label}</span>
+                    {tool.beta ? (
+                      <span className="rounded-full border border-amber-300/25 bg-amber-300/10 px-1.5 py-px text-[10px] font-semibold tracking-wider text-amber-200 uppercase">
+                        beta
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-xs text-zinc-500">{tool.blurb}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        /* Tone tab */
+        <div className="space-y-1 rounded-2xl border border-white/10 bg-black/20 p-1">
+          {toneOptions.map((tone) => (
+            <button
+              key={tone.id}
+              type="button"
+              className={cn(
+                "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+                defaultToneId === tone.id
+                  ? "bg-cyan-300/12 text-zinc-100"
+                  : "text-zinc-400 hover:bg-white/6 hover:text-zinc-200",
+              )}
+              onClick={() => {
+                onToneChange(tone.id);
+              }}
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center">
+                {defaultToneId === tone.id ? (
+                  <Check className="size-3.5 text-cyan-300" />
+                ) : null}
+              </span>
+              <div>
+                <div className="text-sm font-medium">{tone.label}</div>
+                <div className="text-xs text-zinc-500">{tone.summary}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AuthActions ────────────────────────────────────────────────────────────────
 
 interface AuthActionsProps {
   session: Session | null;
@@ -43,10 +186,28 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
   const userName = session?.user?.name?.split(" ").at(0) ?? "손님";
   const accountLabel = "카카오 로그인";
   const userAvatar = session?.user?.image ?? "";
-  const { isMobile } = useSidebar();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
   const [isAccountDialogOpen, setIsAccountDialogOpen] = useState(false);
   const [isDeleteConfirmDialogOpen, setIsDeleteConfirmDialogOpen] = useState(false);
   const [isDonationDialogOpen, setIsDonationDialogOpen] = useState(false);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [settingsDefaultToneId, setSettingsDefaultToneId] = useState<ToneId>(() => {
+    if (typeof window === "undefined") return "clear";
+    return (localStorage.getItem("lumo:default-tone") as ToneId) ?? "clear";
+  });
+  const [settingsDefaultTools, setSettingsDefaultTools] = useState<ToolKey[]>(() => {
+    if (typeof window === "undefined") return ["saju", "astrology"];
+    try {
+      const stored = localStorage.getItem("lumo:default-tools");
+      if (stored) {
+        const parsed = JSON.parse(stored) as ToolKey[];
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return ["saju", "astrology"];
+  });
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState("");
   const [deleteConsentText, setDeleteConsentText] = useState("");
@@ -55,6 +216,64 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
   const handleSignOut = useCallback(async (): Promise<void> => {
     await signOut({ callbackUrl: "/" });
   }, []);
+
+  const handleSettingsToneChange = useCallback((toneId: ToneId) => {
+    setSettingsDefaultToneId(toneId);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("lumo:default-tone", toneId);
+    }
+  }, []);
+
+  const handleSettingsToolToggle = useCallback((toolKey: ToolKey) => {
+    setSettingsDefaultTools((current) => {
+      const isSelected = current.includes(toolKey);
+      let next: ToolKey[];
+      if (isSelected) {
+        next =
+          current.length === 1
+            ? current
+            : toolSelectionKeys.filter((k) => current.includes(k) && k !== toolKey);
+      } else {
+        next = toolSelectionKeys.filter((k) => current.includes(k) || k === toolKey);
+      }
+      if (typeof window !== "undefined") {
+        localStorage.setItem("lumo:default-tools", JSON.stringify(next));
+      }
+      return next;
+    });
+  }, []);
+
+  const handleOpenTutorial = useCallback(() => {
+    const dispatchOpenTutorial = () => {
+      window.dispatchEvent(new CustomEvent("lumo:open-tutorial"));
+    };
+
+    if (isMobile && openMobile) {
+      setOpenMobile(false);
+      window.setTimeout(() => {
+        dispatchOpenTutorial();
+      }, 220);
+      return;
+    }
+
+    dispatchOpenTutorial();
+  }, [isMobile, openMobile, setOpenMobile]);
+
+  useEffect(() => {
+    if (!session?.user) {
+      return undefined;
+    }
+    if (isTutorialSeen()) {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      handleOpenTutorial();
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [handleOpenTutorial, session?.user]);
 
   const handleDeleteAccount = useCallback(async (): Promise<void> => {
     if (isDeletingAccount) {
@@ -150,6 +369,22 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
               >
                 <BadgeCheck className="size-4" />
                 계정
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setIsSettingsDialogOpen(true);
+                }}
+              >
+                <Settings className="size-4" />
+                설정
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  handleOpenTutorial();
+                }}
+              >
+                <BookOpen className="size-4" />
+                튜토리얼
               </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-white/10" />
               <DropdownMenuItem onClick={handleSignOut}>
@@ -369,6 +604,36 @@ function AuthActions({ session, kakaoReady, onOpenLoginModal }: AuthActionsProps
                   onClick={handleDeleteAccount}
                 >
                   {isDeletingAccount ? "탈퇴 처리 중" : "회원 탈퇴 진행"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isSettingsDialogOpen} onOpenChange={setIsSettingsDialogOpen}>
+            <DialogContent className="border-white/10 bg-[#12141d] text-zinc-100 sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>설정</DialogTitle>
+                <DialogDescription className="text-zinc-400">
+                  새 채팅을 시작할 때 기본으로 적용할 톤과 도구를 설정합니다.
+                </DialogDescription>
+              </DialogHeader>
+
+              <SettingsTabs
+                defaultToneId={settingsDefaultToneId}
+                defaultTools={settingsDefaultTools}
+                onToneChange={handleSettingsToneChange}
+                onToolToggle={handleSettingsToolToggle}
+              />
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  className="rounded-2xl bg-zinc-50 text-zinc-950 hover:bg-zinc-200"
+                  onClick={() => {
+                    setIsSettingsDialogOpen(false);
+                  }}
+                >
+                  확인
                 </Button>
               </DialogFooter>
             </DialogContent>

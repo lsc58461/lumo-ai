@@ -124,7 +124,6 @@ a {
 button,
 input,
 textarea {
-  font: inherit;
 }
 
 ::selection {
@@ -148,6 +147,15 @@ textarea {
   background: transparent;
 }
 
+@keyframes tool-loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(500%);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -155,6 +163,12 @@ textarea {
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
   }
 }
 

@@ -22,6 +22,7 @@ export interface ChatRequestPayload {
   question: string;
   toneId: ToneId;
   tools: ToolKey[];
+  requestTimestamp?: string;
   messages: Pick<ChatMessage, "id" | "role" | "content" | "createdAt" | "toolResults">[];
 }
 
@@ -52,6 +53,33 @@ export function getLumoAiClient(): GoogleGenAI {
 }
 
 export const getGeminiClient = getLumoAiClient;
+
+function formatPromptRequestTimestamp(requestTimestamp?: string): string {
+  if (!requestTimestamp) {
+    return "전송 시각 정보 없음";
+  }
+
+  const parsedDate = new Date(requestTimestamp);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return requestTimestamp;
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(parsedDate);
+}
+
+function isTimingQuestion(question: string): boolean {
+  return /(결혼|연애|재회|이직|취업|합격|고백|시기|언제|타이밍|혼인|혼사)/.test(question);
+}
 
 export function buildToolAnalysisPrompt(payload: {
   profile: string;
@@ -151,6 +179,8 @@ export function buildToolMessageLabel(toolKey: ToolKey): string {
 export function buildLumoChatPrompt(payload: ChatRequestPayload): string {
   const tone = toneOptions.find(({ id }) => id === payload.toneId) ?? toneOptions[0];
   const toolLabels = payload.tools.map((toolKey) => toolCatalog[toolKey].label).join(", ");
+  const requestTimestamp = formatPromptRequestTimestamp(payload.requestTimestamp);
+  const timingQuestion = isTimingQuestion(payload.question);
   const selectedProfiles = parseProfileSelection(payload.profile);
   const isCompatibilityReading = selectedProfiles.length === 2;
   const activeToolMessages = payload.messages.filter((message) => message.role === "tool");
@@ -191,12 +221,19 @@ export function buildLumoChatPrompt(payload: ChatRequestPayload): string {
     "모델명이나 내부 시스템을 드러내지 말고, 서비스 이름이 필요할 때만 루모 AI라고 말한다.",
     "답변은 멀티턴 대화처럼 자연스럽게 이어가되, 핵심 흐름과 지금 해볼 행동이 분명해야 한다.",
     "도구 분석 메시지가 있으면 그것들을 종합해 최종 결론을 내리고, 같은 내용을 반복하지 말고 한 단계 더 통합적으로 설명한다.",
+    timingQuestion
+      ? "사용자 질문이 시기 판단이면 애매하게 뭉개지 말고, 가장 유력한 시기 1개와 그다음 시기 1개, 조심할 구간 1개를 분리해서 말한다. 월, 분기, 상반기·하반기처럼 실제 행동에 쓸 수 있는 시간 단위로 제시하고, 왜 그렇게 보는지 근거를 짧게 붙인다."
+      : "",
+    timingQuestion
+      ? "시기 질문에서도 운명을 확정하듯 단정하지는 말되, '가능성이 있다' 같은 표현만 반복하지 말고 우선순위가 보이는 답을 준다."
+      : "",
     isCompatibilityReading
       ? "프로필이 두 개면 두 사람의 궁합과 상호작용을 중심으로 해석한다. 잘 맞는 지점, 부딪히기 쉬운 지점, 관계를 다듬는 실전 포인트를 함께 정리한다."
       : "프로필이 하나면 그 사람의 현재 흐름과 선택 포인트에 집중해 해석한다.",
     `사용 도구: ${toolLabels}`,
     `답변 톤: ${tone.label} (${tone.summary})`,
     `말투 가이드: ${tone.guide}`,
+    `이번 채팅 전송 시각: ${requestTimestamp} (Asia/Seoul)`,
     "출생 정보:",
     profileBlock,
     "이번 답변에 적용할 현재 도구 분석:",
@@ -204,7 +241,9 @@ export function buildLumoChatPrompt(payload: ChatRequestPayload): string {
     "이전 대화:",
     historyBlock,
     `이번 사용자 메시지: ${payload.question}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildFollowUpSuggestionsPrompt(payload: FollowUpSuggestionsPayload): string {
