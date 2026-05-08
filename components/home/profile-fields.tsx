@@ -2,8 +2,9 @@
 
 import { format, parseISO } from "date-fns";
 import { ko } from "date-fns/locale";
-import { CalendarIcon, ChevronDown, Clock3 } from "lucide-react";
+import { CalendarIcon, ChevronDown } from "lucide-react";
 
+import { ProfileTimePicker } from "@/components/home/profile-time-picker";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -15,7 +16,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -106,6 +106,8 @@ export function ProfileDatePickerField({
   onChange,
 }: ProfileDatePickerFieldProps) {
   const selectedDate = value ? parseISO(value) : undefined;
+  const minDate = new Date(1930, 0, 1);
+  const maxDate = new Date();
 
   return (
     <div className="space-y-2">
@@ -115,16 +117,16 @@ export function ProfileDatePickerField({
           <Button
             type="button"
             variant="outline"
+            data-empty={!selectedDate}
             className={cn(
               profileDropdownTriggerClassName,
-              "justify-start text-left font-normal",
-              !selectedDate && "text-zinc-500",
+              "justify-start text-left font-normal data-[empty=true]:text-zinc-500",
             )}
           >
             <CalendarIcon className="size-4 shrink-0" />
             <span className="truncate">
               {selectedDate
-                ? format(selectedDate, "yyyy년 M월 d일", { locale: ko })
+                ? format(selectedDate, "PPP", { locale: ko })
                 : "생년월일을 선택하세요"}
             </span>
           </Button>
@@ -139,11 +141,13 @@ export function ProfileDatePickerField({
             onSelect={(date) => {
               onChange(date ? format(date, "yyyy-MM-dd") : "");
             }}
+            disabled={(date) => date > maxDate || date < minDate}
+            autoFocus
             locale={ko}
             captionLayout="dropdown"
-            fromYear={1930}
-            toYear={new Date().getFullYear()}
-            defaultMonth={selectedDate}
+            startMonth={minDate}
+            endMonth={maxDate}
+            defaultMonth={selectedDate ?? new Date(2000, 0, 1)}
           />
         </PopoverContent>
       </Popover>
@@ -165,20 +169,12 @@ export function ProfileTimeInputField({
   return (
     <div className="space-y-2">
       <div className="text-sm font-medium text-zinc-200">출생시각</div>
-      <div className="relative">
-        <Clock3 className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-zinc-500" />
-        <Input
-          aria-label="출생시각 입력"
-          type="time"
-          step={60}
-          disabled={disabled}
-          className="h-12 rounded-2xl border-white/10 bg-black/20 pl-11 text-zinc-100 scheme-dark disabled:cursor-not-allowed disabled:opacity-50"
-          value={value}
-          onChange={(event) => {
-            onChange(event.target.value);
-          }}
-        />
-      </div>
+      <ProfileTimePicker
+        value={value}
+        disabled={disabled}
+        triggerClassName={profileDropdownTriggerClassName}
+        onChange={onChange}
+      />
       <div className="text-xs text-zinc-500">1분 단위로 직접 입력할 수 있습니다.</div>
     </div>
   );

@@ -161,6 +161,27 @@ function mapSavedProfileRecord(document: SavedProfileDocument): SavedProfileReco
   };
 }
 
+export const getConversationById = cache(
+  async (
+    userId: string | undefined,
+    conversationId: string,
+  ): Promise<ConversationSession | null> => {
+    if (!userId || !ObjectId.isValid(conversationId)) {
+      return null;
+    }
+
+    const database = await getMongoDatabase();
+    const conversationDocument = await database
+      .collection<ConversationSessionDocument>(CONVERSATIONS_COLLECTION)
+      .findOne({
+        _id: new ObjectId(conversationId),
+        userId,
+      });
+
+    return conversationDocument ? mapConversationSession(conversationDocument) : null;
+  },
+);
+
 export const getHomePageData = cache(async (userId?: string, shareId?: string) => {
   const database = await getMongoDatabase();
   const promptDocumentsPromise = database

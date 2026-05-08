@@ -34,6 +34,21 @@ interface SharedConversationDocument extends ConversationSessionDocument {
   shareId: string;
   sharedAt: string;
   sourceConversationId: string;
+  snapshotSignature?: string;
+}
+
+function buildSnapshotSignature(conversation: ConversationSessionDocument): string {
+  return JSON.stringify({
+    title: conversation.title,
+    focus: conversation.focus,
+    preview: conversation.preview,
+    updatedAt: conversation.updatedAt,
+    createdAt: conversation.createdAt,
+    profile: conversation.profile,
+    toneId: conversation.toneId,
+    tools: conversation.tools,
+    messages: conversation.messages,
+  });
 }
 
 export async function POST(request: Request) {
@@ -76,12 +91,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "공유할 대화를 찾을 수 없습니다." }, { status: 404 });
     }
 
+    const snapshotSignature = buildSnapshotSignature(conversation);
+    const latestSharedSnapshot = await sharedSnapshots.findOne(
+      {
+        userId,
+        sourceConversationId: conversation._id.toString(),
+      },
+      {
+        sort: {
+          sharedAt: -1,
+        },
+      },
+    );
+
+    if (latestSharedSnapshot) {
+      const latestSnapshotSignature =
+        latestSharedSnapshot.snapshotSignature ?? buildSnapshotSignature(latestSharedSnapshot);
+
+      if (latestSnapshotSignature === snapshotSignature) {
+        return NextResponse.json({ shareId: latestSharedSnapshot.shareId });
+      }
+    }
+
     const shareId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(16).slice(2);
 
     await sharedSnapshots.insertOne({
       shareId,
       sharedAt: new Date().toISOString(),
       sourceConversationId: conversation._id.toString(),
+      snapshotSignature,
       userId,
       title: conversation.title,
       focus: conversation.focus,

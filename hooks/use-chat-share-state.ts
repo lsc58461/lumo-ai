@@ -144,10 +144,7 @@ export function useChatShareState({
 
     setIsShareDialogOpen(true);
     setShareError("");
-
-    if (shareUrl) {
-      return;
-    }
+    setShareUrl("");
 
     setIsCreatingShareLink(true);
 
@@ -158,14 +155,7 @@ export function useChatShareState({
     } finally {
       setIsCreatingShareLink(false);
     }
-  }, [
-    conversationId,
-    hasMessages,
-    isDraftConversation,
-    isReadOnly,
-    onCreateShareLink,
-    shareUrl,
-  ]);
+  }, [conversationId, hasMessages, isDraftConversation, isReadOnly, onCreateShareLink]);
 
   const handleCopyShareLink = useCallback(async (): Promise<void> => {
     if (!shareUrl) {

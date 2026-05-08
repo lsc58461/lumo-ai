@@ -34,6 +34,7 @@ import {
 
 interface HomeShellProps {
   featuredPrompts: PromptTemplate[];
+  initialConversation: ConversationSession | null;
   initialConversationPreviews: ConversationPreview[];
   initialProfiles: SavedProfileRecord[];
   initialActiveProfileIds: string[];
@@ -51,6 +52,13 @@ interface DeleteConversationResponse {
 
 interface GetConversationResponse {
   conversation?: ConversationSession;
+  error?: string;
+}
+
+interface CreateChatResponse {
+  conversationId?: string;
+  streamId?: string;
+  streamUrl?: string;
   error?: string;
 }
 
@@ -96,8 +104,52 @@ function upsertConversationPreview(
   return [nextPreview, ...previews.filter(({ id }) => id !== nextPreview.id)].slice(0, 12);
 }
 
+function replaceConversationPreview(
+  previews: ConversationPreview[],
+  nextPreview: ConversationPreview,
+): ConversationPreview[] {
+  const hasPreview = previews.some(({ id }) => id === nextPreview.id);
+
+  if (!hasPreview) {
+    return upsertConversationPreview(previews, nextPreview);
+  }
+
+  return previews.map((preview) => (preview.id === nextPreview.id ? nextPreview : preview));
+}
+
+function getConversationHref(conversationId?: string): string {
+  return conversationId ? `/conversations/${conversationId}` : "/";
+}
+
+function getConversationIdFromPathname(pathname: string): string | null {
+  const matchedConversationPath = pathname.match(/^\/conversations\/([^/]+)$/);
+
+  return matchedConversationPath?.[1] ?? null;
+}
+
+function pushConversationHistory(conversationId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.history.pushState(window.history.state, "", getConversationHref(conversationId));
+}
+
+function replaceConversationHistory(conversationId?: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.history.replaceState(window.history.state, "", getConversationHref(conversationId));
+}
+
+interface SelectConversationOptions {
+  syncHistory?: "push" | "replace" | "none";
+}
+
 function HomeShell({
   featuredPrompts,
+  initialConversation,
   initialConversationPreviews,
   initialProfiles,
   initialActiveProfileIds,
@@ -122,7 +174,9 @@ function HomeShell({
     };
   }, []);
   const [conversationPreviews, setConversationPreviews] = useState(initialConversationPreviews);
-  const [loadedConversations, setLoadedConversations] = useState<ConversationSession[]>([]);
+  const [loadedConversations, setLoadedConversations] = useState<ConversationSession[]>(
+    initialConversation ? [initialConversation] : [],
+  );
   const [savedProfiles, setSavedProfiles] = useState(initialProfiles);
   const [selectedSavedProfileIds, setSelectedSavedProfileIds] =
     useState(initialActiveProfileIds);
@@ -131,7 +185,7 @@ function HomeShell({
     createDraftConversation(featuredPrompts, initialProfile),
   );
   const [activeConversationId, setActiveConversationId] = useState(
-    initialSharedConversation?.id ?? draftConversation.id,
+    initialConversation?.id ?? initialSharedConversation?.id ?? draftConversation.id,
   );
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -269,26 +323,6 @@ function HomeShell({
     setIsLoginModalOpen(true);
   }, []);
 
-  const updateActiveConversation = useCallback(
-    (nextConversation: ConversationSession): void => {
-      if (activeConversationId === draftConversation.id) {
-        setDraftConversation(nextConversation);
-        return;
-      }
-
-      setLoadedConversations((currentConversations) =>
-        upsertConversation(currentConversations, nextConversation),
-      );
-      setConversationPreviews((currentConversationPreviews) =>
-        upsertConversationPreview(
-          currentConversationPreviews,
-          toConversationPreview(nextConversation),
-        ),
-      );
-    },
-    [activeConversationId, draftConversation.id],
-  );
-
   const handleNewChat = useCallback((): void => {
     const nextDraftConversation = createDraftConversation(featuredPrompts, defaultProfileValue);
 
@@ -296,10 +330,13 @@ function HomeShell({
     setActiveConversationId(nextDraftConversation.id);
     setPendingConversationId(null);
     setRequestError("");
+    replaceConversationHistory();
   }, [defaultProfileValue, featuredPrompts]);
 
-  const handleSelectConversation = useCallback(
-    (conversationId: string): void => {
+  const selectConversation = useCallback(
+    (conversationId: string, options?: SelectConversationOptions): void => {
+      const historyMode = options?.syncHistory ?? "push";
+
       if (isSharedView) {
         return;
       }
@@ -320,6 +357,13 @@ function HomeShell({
         setPendingConversationId(null);
         setActiveConversationId(conversationId);
         setRequestError("");
+
+        if (historyMode === "push") {
+          pushConversationHistory(conversationId);
+        } else if (historyMode === "replace") {
+          replaceConversationHistory(conversationId);
+        }
+
         return;
       }
 
@@ -328,6 +372,12 @@ function HomeShell({
       setActiveConversationId(conversationId);
       setPendingConversationId(conversationId);
       setRequestError("");
+
+      if (historyMode === "push") {
+        pushConversationHistory(conversationId);
+      } else if (historyMode === "replace") {
+        replaceConversationHistory(conversationId);
+      }
 
       const loadConversation = async () => {
         try {
@@ -342,7 +392,7 @@ function HomeShell({
             upsertConversation(currentConversations, data.conversation as ConversationSession),
           );
           setConversationPreviews((currentConversationPreviews) =>
-            upsertConversationPreview(
+            replaceConversationPreview(
               currentConversationPreviews,
               toConversationPreview(data.conversation as ConversationSession),
             ),
@@ -350,6 +400,13 @@ function HomeShell({
           setRequestError("");
         } catch (error) {
           setActiveConversationId(previousConversationId);
+
+          if (historyMode !== "none") {
+            replaceConversationHistory(
+              previousConversationId.startsWith("draft-") ? undefined : previousConversationId,
+            );
+          }
+
           setRequestError(
             error instanceof Error ? error.message : "채팅을 불러오는 중 오류가 발생했습니다.",
           );
@@ -366,6 +423,42 @@ function HomeShell({
     },
     [activeConversationId, isAuthenticated, isSharedView, loadedConversations],
   );
+
+  const handleSelectConversation = useCallback(
+    (conversationId: string): void => {
+      selectConversation(conversationId, { syncHistory: "push" });
+    },
+    [selectConversation],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isSharedView) {
+      return undefined;
+    }
+
+    const handlePopState = () => {
+      const nextConversationId = getConversationIdFromPathname(window.location.pathname);
+
+      if (!nextConversationId) {
+        setPendingConversationId(null);
+        setRequestError("");
+        setActiveConversationId(draftConversation.id);
+        return;
+      }
+
+      if (nextConversationId === activeConversationId) {
+        return;
+      }
+
+      selectConversation(nextConversationId, { syncHistory: "none" });
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [activeConversationId, draftConversation.id, isSharedView, selectConversation]);
 
   const handleDeleteConversation = useCallback(
     async (conversationId: string): Promise<void> => {
@@ -401,6 +494,7 @@ function HomeShell({
         setDraftConversation(nextDraftConversation);
         setActiveConversationId(nextDraftConversation.id);
         setPendingConversationId(null);
+        replaceConversationHistory();
       }
 
       setRequestError("");
@@ -578,7 +672,7 @@ function HomeShell({
         return;
       }
 
-      const response = await fetch("/api/chat/follow-ups", {
+      const response = await fetch("/api/conversations/follow-ups", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -671,13 +765,32 @@ function HomeShell({
         tools: draft.tools,
         messages: [...activeConversation.messages, userMessage, pendingToolMessage],
       };
+      const initialDraftConversationId = optimisticConversation.id;
+      let streamConversationId = optimisticConversation.id;
 
-      updateActiveConversation(optimisticConversation);
+      const applyStreamingConversation = (nextConversation: ConversationSession): void => {
+        if (streamConversationId === initialDraftConversationId) {
+          setDraftConversation(nextConversation);
+          return;
+        }
+
+        setLoadedConversations((currentConversations) =>
+          upsertConversation(currentConversations, nextConversation),
+        );
+        setConversationPreviews((currentConversationPreviews) =>
+          upsertConversationPreview(
+            currentConversationPreviews,
+            toConversationPreview(nextConversation),
+          ),
+        );
+      };
+
+      applyStreamingConversation(optimisticConversation);
       setIsSending(true);
       setRequestError("");
 
       try {
-        const response = await fetch("/api/chat", {
+        const response = await fetch("/api/conversations", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -707,22 +820,30 @@ function HomeShell({
         }
 
         if (!response.ok) {
-          const data = (await response.json()) as {
-            error?: string;
-          };
+          const data = (await response.json()) as CreateChatResponse;
 
           throw new Error(data.error ?? "루모 AI 채팅 생성에 실패했습니다.");
         }
 
-        if (!response.body) {
-          throw new Error("스트리밍 응답을 읽을 수 없습니다.");
+        const data = (await response.json()) as CreateChatResponse;
+
+        if (!data.streamUrl || !data.conversationId) {
+          throw new Error("채팅 스트림을 시작하지 못했습니다.");
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let streamBuffer = "";
+        const { conversationId, streamUrl } = data;
+
         let assistantContent = "";
         let streamedConversation = optimisticConversation;
+        streamConversationId = conversationId;
+        streamedConversation = {
+          ...streamedConversation,
+          id: conversationId,
+        };
+        applyStreamingConversation(streamedConversation);
+        setActiveConversationId(conversationId);
+        setRequestError("");
+        pushConversationHistory(conversationId);
 
         const applyStreamPayload = (
           payload:
@@ -733,7 +854,7 @@ function HomeShell({
         ): void => {
           if (payload.type === "tool") {
             streamedConversation = appendToolMessage(streamedConversation, payload.message);
-            updateActiveConversation(streamedConversation);
+            applyStreamingConversation(streamedConversation);
             return;
           }
 
@@ -750,22 +871,14 @@ function HomeShell({
               assistantContent,
               true,
             );
-            updateActiveConversation(streamedConversation);
+            applyStreamingConversation(streamedConversation);
             return;
           }
 
           if (payload.type === "done") {
             streamedConversation = removePendingToolMessages(streamedConversation);
-            updateActiveConversation(streamedConversation);
-            setLoadedConversations((currentConversations) =>
-              upsertConversation(currentConversations, payload.conversation),
-            );
-            setConversationPreviews((currentConversationPreviews) =>
-              upsertConversationPreview(
-                currentConversationPreviews,
-                toConversationPreview(payload.conversation),
-              ),
-            );
+            streamConversationId = payload.conversation.id;
+            applyStreamingConversation(payload.conversation);
             setActiveConversationId(payload.conversation.id);
             setPendingConversationId(null);
             setRequestError("");
@@ -778,41 +891,83 @@ function HomeShell({
           throw new Error(payload.error);
         };
 
-        const consumeReader = async (): Promise<void> => {
-          const { done, value } = await reader.read();
+        await new Promise<void>((resolve, reject) => {
+          const eventSource = new EventSource(streamUrl);
+          let isSettled = false;
 
-          if (done) {
-            return;
-          }
+          const closeStream = (): void => {
+            eventSource.close();
+          };
 
-          streamBuffer += decoder.decode(value, { stream: true });
-          const lines = streamBuffer.split("\n");
-          streamBuffer = lines.pop() ?? "";
+          const settleWithError = (message: string): void => {
+            if (isSettled) {
+              return;
+            }
 
-          lines
-            .filter((line) => line.trim().length > 0)
-            .forEach((line) => {
-              const payload = JSON.parse(line) as
-                | { type: "tool"; message: ChatMessage }
-                | { type: "chunk"; delta: string }
-                | { type: "done"; conversation: ConversationSession }
-                | { type: "error"; error: string };
+            isSettled = true;
+            closeStream();
+            reject(new Error(message));
+          };
 
-              applyStreamPayload(payload);
+          eventSource.addEventListener("tool", (event) => {
+            const payload = JSON.parse((event as MessageEvent<string>).data) as ChatMessage;
+
+            applyStreamPayload({
+              type: "tool",
+              message: payload,
             });
+          });
 
-          await consumeReader();
-        };
+          eventSource.addEventListener("chunk", (event) => {
+            const payload = JSON.parse((event as MessageEvent<string>).data) as {
+              delta: string;
+            };
 
-        await consumeReader();
+            applyStreamPayload({
+              type: "chunk",
+              delta: payload.delta,
+            });
+          });
+
+          eventSource.addEventListener("done", (event) => {
+            if (isSettled) {
+              return;
+            }
+
+            const payload = JSON.parse(
+              (event as MessageEvent<string>).data,
+            ) as ConversationSession;
+
+            isSettled = true;
+            applyStreamPayload({
+              type: "done",
+              conversation: payload,
+            });
+            closeStream();
+            resolve();
+          });
+
+          eventSource.addEventListener("failure", (event) => {
+            const payload = JSON.parse((event as MessageEvent<string>).data) as {
+              error?: string;
+            };
+
+            settleWithError(payload.error ?? "루모 AI 채팅 생성에 실패했습니다.");
+          });
+
+          eventSource.onerror = () => {
+            // Let EventSource retry automatically. Terminal failures come through the failure event.
+          };
+        });
       } catch (error) {
         const errorMessage =
           error instanceof Error
             ? error.message
             : "루모 AI 채팅 생성 중 알 수 없는 오류가 발생했습니다.";
 
-        updateActiveConversation({
+        applyStreamingConversation({
           ...optimisticConversation,
+          id: streamConversationId,
           preview: deriveConversationPreview(draft.question),
           messages: [...activeConversation.messages, userMessage],
         });
@@ -830,7 +985,6 @@ function HomeShell({
       isAuthenticated,
       removePendingToolMessages,
       requestFollowUpSuggestions,
-      updateActiveConversation,
       upsertMessageContent,
     ],
   );

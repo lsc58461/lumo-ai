@@ -44,6 +44,23 @@ async function ensureMongoIndexes(database: Db): Promise<void> {
       },
       { name: "conversations_userId_updatedAt" },
     ),
+    database.collection("chatStreamJobs").createIndex(
+      {
+        userId: 1,
+        status: 1,
+        createdAt: -1,
+      },
+      { name: "chatStreamJobs_userId_status_createdAt" },
+    ),
+    database.collection("chatStreamJobs").createIndex(
+      {
+        createdAt: 1,
+      },
+      {
+        expireAfterSeconds: 60 * 60 * 24,
+        name: "chatStreamJobs_createdAt_ttl",
+      },
+    ),
     database.collection("promptTemplates").createIndex(
       {
         featured: 1,

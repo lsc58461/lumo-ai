@@ -1,8 +1,5 @@
-import { ObjectId } from "mongodb";
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
+import { ObjectId, type Db } from "mongodb";
 
-import { authOptions } from "@/lib/auth";
 import {
   createChatMessage,
   deriveConversationFocus,
@@ -16,7 +13,6 @@ import {
   buildToolMessageLabel,
   buildLumoChatPrompt,
   getLumoAiClient,
-  isLumoAiConfigured,
   LUMO_FALLBACK_MODEL,
   LUMO_PRIMARY_MODEL,
   type ChatRequestPayload,
@@ -33,7 +29,7 @@ import {
   mergeStructuredToolAnalysisResult,
 } from "@/lib/tool-analysis";
 
-export const runtime = "nodejs";
+export const CHAT_STREAM_JOBS_COLLECTION = "chatStreamJobs";
 
 interface ChatMessageDocument {
   id: string;
@@ -68,15 +64,6 @@ interface UserProfileDocument {
   updatedAt: string;
 }
 
-class LumoRouteError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
-
 interface ToolAnalysisMessage {
   toolKey: ChatRequestPayload["tools"][number];
   message: ChatMessage;
@@ -86,6 +73,41 @@ interface ToolAnalysisRunResult {
   promptMessages: ToolAnalysisMessage[];
   streamedMessages: ToolAnalysisMessage[];
   skippedAll: boolean;
+}
+
+type ChatStreamJobStatus = "pending" | "processing" | "completed" | "failed";
+
+type ChatStreamEventName = "tool" | "chunk" | "done" | "failure";
+
+interface ChatStreamEventDocument {
+  id: number;
+  event: ChatStreamEventName;
+  payload: unknown;
+  createdAt: Date;
+}
+
+export interface ChatStreamJobDocument {
+  _id?: ObjectId;
+  userId: string;
+  conversationId: ObjectId;
+  request: ChatRequestPayload;
+  status: ChatStreamJobStatus;
+  events: ChatStreamEventDocument[];
+  nextEventId: number;
+  error?: string;
+  createdAt: Date;
+  processedAt?: Date;
+  completedAt?: Date;
+  failedAt?: Date;
+}
+
+export class LumoRouteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
 }
 
 function buildToolResultCacheKey(result: ToolExecutionResult): string {
@@ -195,7 +217,7 @@ async function generateConversationTitle(
   }
 }
 
-function isChatMessageArray(value: unknown): value is ChatRequestPayload["messages"] {
+export function isChatMessageArray(value: unknown): value is ChatRequestPayload["messages"] {
   return (
     Array.isArray(value) &&
     value.every(
@@ -213,7 +235,7 @@ function isChatMessageArray(value: unknown): value is ChatRequestPayload["messag
   );
 }
 
-function isChatRequestPayload(value: unknown): value is ChatRequestPayload {
+export function isChatRequestPayload(value: unknown): value is ChatRequestPayload {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -310,13 +332,95 @@ function toMessageDocument(message: ChatMessage): ChatMessageDocument {
   };
 }
 
+function sanitizeChatMessages(
+  messages: ChatRequestPayload["messages"],
+): ChatRequestPayload["messages"] {
+  return messages
+    .filter(({ content }) => content.trim().length > 0)
+    .map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      toolResults: Array.isArray(message.toolResults) ? message.toolResults : undefined,
+    }));
+}
+
+async function upsertUserProfileDocument(
+  database: Db,
+  userId: string,
+  userName?: string | null,
+  userImage?: string | null,
+): Promise<void> {
+  await database.collection<UserProfileDocument>("userProfiles").updateOne(
+    { userId },
+    {
+      $set: {
+        userId,
+        name: userName,
+        image: userImage,
+        updatedAt: new Date().toISOString(),
+      },
+      $setOnInsert: {
+        activeProfileId: "",
+        activeProfileIds: [],
+      },
+    },
+    { upsert: true },
+  );
+}
+
+async function ensureConversationForStream(
+  body: ChatRequestPayload,
+  sanitizedMessages: ChatMessageDocument[],
+  userId: string,
+  userName?: string | null,
+  userImage?: string | null,
+): Promise<ObjectId> {
+  const database = await getMongoDatabase();
+  await upsertUserProfileDocument(database, userId, userName, userImage);
+
+  const conversations =
+    database.collection<ConversationSessionDocument>(CONVERSATIONS_COLLECTION);
+
+  if (body.conversationId && ObjectId.isValid(body.conversationId)) {
+    const existingConversation = await conversations.findOne({
+      _id: new ObjectId(body.conversationId),
+      userId,
+    });
+
+    if (existingConversation?._id) {
+      return existingConversation._id;
+    }
+  }
+
+  const reservedConversationId = new ObjectId();
+  const createdAt = new Date().toISOString();
+
+  await conversations.insertOne({
+    _id: reservedConversationId,
+    userId,
+    title: "제목 요약 중…",
+    focus: deriveConversationFocus(body.question),
+    preview: deriveConversationPreview(body.question),
+    updatedAt: createdAt,
+    createdAt,
+    profile: body.profile,
+    toneId: body.toneId,
+    tools: body.tools,
+    messages: sanitizedMessages,
+    featured: false,
+  });
+
+  return reservedConversationId;
+}
+
 async function persistConversation(
   body: ChatRequestPayload,
   sanitizedMessages: ChatMessageDocument[],
   assistantText: string,
   userId: string,
-  userName?: string | null,
-  userImage?: string | null,
+  conversationId: ObjectId,
 ): Promise<{
   conversation: ConversationSession;
 }> {
@@ -338,40 +442,23 @@ async function persistConversation(
     messages: [...sanitizedMessages, toMessageDocument(assistantMessage)],
   };
   const database = await getMongoDatabase();
-  await database.collection<UserProfileDocument>("userProfiles").updateOne(
-    { userId },
-    {
-      $set: {
-        userId,
-        name: userName,
-        image: userImage,
-        updatedAt: new Date().toISOString(),
-      },
-      $setOnInsert: {
-        activeProfileId: "",
-        activeProfileIds: [],
-      },
-    },
-    { upsert: true },
-  );
   const conversations =
     database.collection<ConversationSessionDocument>(CONVERSATIONS_COLLECTION);
-  let existingConversation: ConversationSessionDocument | null = null;
-
-  if (body.conversationId && ObjectId.isValid(body.conversationId)) {
-    const conversationObjectId = new ObjectId(body.conversationId);
-    existingConversation = await conversations.findOne({
-      _id: conversationObjectId,
-      userId,
-    });
-  }
+  const existingConversation = await conversations.findOne({
+    _id: conversationId,
+    userId,
+  });
+  const shouldPreserveExistingTitle = Boolean(
+    existingConversation?.title &&
+    existingConversation.title !== "새 채팅" &&
+    existingConversation.title !== "제목 요약 중…",
+  );
 
   const nextConversationDocument: ConversationSessionDocument = {
     ...fallbackConversationDocument,
-    title:
-      existingConversation?.title && existingConversation.title !== "새 채팅"
-        ? existingConversation.title
-        : fallbackConversationDocument.title,
+    title: shouldPreserveExistingTitle
+      ? (existingConversation?.title ?? fallbackConversationDocument.title)
+      : fallbackConversationDocument.title,
     createdAt: existingConversation?.createdAt ?? fallbackConversationDocument.createdAt,
     userId,
   };
@@ -397,6 +484,7 @@ async function persistConversation(
   }
 
   const insertResult = await conversations.insertOne({
+    _id: conversationId,
     ...nextConversationDocument,
     featured: false,
   });
@@ -651,82 +739,267 @@ async function generateSequentialToolMessages(
   };
 }
 
-export async function POST(request: Request) {
-  const body = (await request.json()) as unknown;
+function createSseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
 
-  if (!isChatRequestPayload(body)) {
-    return NextResponse.json({ error: "잘못된 채팅 요청 형식입니다." }, { status: 400 });
-  }
+function waitForNextPoll(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
 
-  if (!body.profile.trim() || !body.question.trim()) {
-    return NextResponse.json(
-      { error: "출생 정보와 질문을 모두 입력해 주세요." },
-      { status: 400 },
-    );
-  }
+function encodeSseEvent(
+  encoder: TextEncoder,
+  eventId: number,
+  event: ChatStreamEventName,
+  payload: unknown,
+): Uint8Array {
+  return encoder.encode(
+    `id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`,
+  );
+}
 
-  const session = await getServerSession(authOptions);
-  const userId = session?.user?.id;
-  const userName = session?.user?.name ?? null;
-  const userImage = session?.user?.image ?? null;
+async function appendStreamEvent(
+  jobs: import("mongodb").Collection<ChatStreamJobDocument>,
+  jobId: ObjectId,
+  userId: string,
+  nextEventId: number,
+  event: ChatStreamEventName,
+  payload: unknown,
+): Promise<number> {
+  await jobs.updateOne(
+    {
+      _id: jobId,
+      userId,
+    },
+    {
+      $push: {
+        events: {
+          id: nextEventId,
+          event,
+          payload,
+          createdAt: new Date(),
+        },
+      },
+      $set: {
+        nextEventId: nextEventId + 1,
+      },
+    },
+  );
 
-  if (!userId) {
-    return NextResponse.json(
-      { error: "로그인 후에만 채팅을 보낼 수 있습니다." },
-      { status: 401 },
-    );
-  }
+  return nextEventId;
+}
 
-  if (!isLumoAiConfigured()) {
-    return NextResponse.json(
-      { error: "루모 AI 연결 키가 없어 아직 채팅을 생성할 수 없습니다." },
-      { status: 503 },
-    );
-  }
+function createReplaySseResponse(
+  jobs: import("mongodb").Collection<ChatStreamJobDocument>,
+  jobId: ObjectId,
+  userId: string,
+  lastEventId: number,
+  signal?: AbortSignal,
+): Response {
+  const encoder = new TextEncoder();
 
-  try {
-    const requestTimestamp = new Date().toISOString();
-    const sanitizedMessages = body.messages
-      .filter(({ content }) => content.trim().length > 0)
-      .map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        createdAt: message.createdAt,
-        toolResults: Array.isArray(message.toolResults) ? message.toolResults : undefined,
-      }));
-
-    const encoder = new TextEncoder();
-
-    const stream = new ReadableStream({
+  return createSseResponse(
+    new ReadableStream({
       async start(controller) {
-        const enqueueEvent = (payload: Record<string, unknown>) => {
-          controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+        let latestEventId = lastEventId;
+        let heartbeatTick = 0;
+
+        const pollForEvents = async (): Promise<void> => {
+          if (signal?.aborted) {
+            controller.close();
+            return;
+          }
+
+          const job = await jobs.findOne({
+            _id: jobId,
+            userId,
+          });
+
+          if (!job) {
+            throw new LumoRouteError("채팅 스트림을 찾지 못했습니다.", 404);
+          }
+
+          const nextEvents = (job.events ?? []).filter(({ id }) => id > latestEventId);
+
+          nextEvents.forEach((streamEvent) => {
+            latestEventId = streamEvent.id;
+            controller.enqueue(
+              encodeSseEvent(encoder, streamEvent.id, streamEvent.event, streamEvent.payload),
+            );
+          });
+
+          if (job.status === "completed" || job.status === "failed") {
+            controller.close();
+            return;
+          }
+
+          heartbeatTick += 1;
+
+          if (heartbeatTick >= 30) {
+            controller.enqueue(encoder.encode(`: keep-alive ${Date.now()}\n\n`));
+            heartbeatTick = 0;
+          }
+
+          await waitForNextPoll(500);
+          await pollForEvents();
         };
 
         try {
-          const toolRunResult = await generateSequentialToolMessages(
-            {
-              ...body,
-              messages: sanitizedMessages,
-            },
-            (message) => {
-              enqueueEvent({ type: "tool", message });
-            },
+          await pollForEvents();
+        } catch {
+          controller.close();
+        }
+      },
+    }),
+  );
+}
+
+export async function createChatStreamJob(
+  body: ChatRequestPayload,
+  userId: string,
+  userName?: string | null,
+  userImage?: string | null,
+): Promise<{
+  streamId: string;
+  streamUrl: string;
+  conversationId: string;
+}> {
+  const sanitizedBody: ChatRequestPayload = {
+    ...body,
+    messages: sanitizeChatMessages(body.messages),
+  };
+  const sanitizedMessageDocuments = sanitizedBody.messages.map((message) =>
+    toMessageDocument(message as ChatMessage),
+  );
+  const conversationId = await ensureConversationForStream(
+    sanitizedBody,
+    sanitizedMessageDocuments,
+    userId,
+    userName,
+    userImage,
+  );
+  const streamId = new ObjectId();
+  const database = await getMongoDatabase();
+
+  await database.collection<ChatStreamJobDocument>(CHAT_STREAM_JOBS_COLLECTION).insertOne({
+    _id: streamId,
+    userId,
+    conversationId,
+    request: sanitizedBody,
+    status: "pending",
+    events: [],
+    nextEventId: 0,
+    createdAt: new Date(),
+  });
+
+  return {
+    streamId: streamId.toString(),
+    streamUrl: `/api/conversations/streams/${streamId.toString()}`,
+    conversationId: conversationId.toString(),
+  };
+}
+
+export async function createChatEventStreamResponse(
+  streamId: string,
+  userId: string,
+  lastEventId = -1,
+  signal?: AbortSignal,
+): Promise<Response> {
+  if (!ObjectId.isValid(streamId)) {
+    throw new LumoRouteError("잘못된 채팅 스트림 ID입니다.", 400);
+  }
+
+  const database = await getMongoDatabase();
+  const streamObjectId = new ObjectId(streamId);
+  const jobs = database.collection<ChatStreamJobDocument>(CHAT_STREAM_JOBS_COLLECTION);
+  const claimedJob = await jobs.findOneAndUpdate(
+    {
+      _id: streamObjectId,
+      userId,
+      status: "pending",
+    },
+    {
+      $set: {
+        status: "processing",
+        processedAt: new Date(),
+      },
+      $unset: {
+        error: "",
+      },
+    },
+    { returnDocument: "after" },
+  );
+
+  if (!claimedJob) {
+    const existingJob = await jobs.findOne({
+      _id: streamObjectId,
+      userId,
+    });
+
+    if (!existingJob) {
+      throw new LumoRouteError("채팅 스트림을 찾지 못했습니다.", 404);
+    }
+
+    return createReplaySseResponse(jobs, streamObjectId, userId, lastEventId, signal);
+  }
+
+  const encoder = new TextEncoder();
+
+  return createSseResponse(
+    new ReadableStream({
+      async start(controller) {
+        let nextEventId = claimedJob.nextEventId ?? 0;
+
+        const enqueueEvent = async (event: ChatStreamEventName, payload: unknown) => {
+          const currentEventId = await appendStreamEvent(
+            jobs,
+            claimedJob._id,
+            userId,
+            nextEventId,
+            event,
+            payload,
           );
 
+          nextEventId += 1;
+
+          try {
+            controller.enqueue(encodeSseEvent(encoder, currentEventId, event, payload));
+          } catch {
+            // Keep processing and persisting events even if the current SSE client disconnects.
+          }
+        };
+
+        try {
+          const { request, conversationId } = claimedJob;
+          const sanitizedMessages = sanitizeChatMessages(request.messages).map((message) =>
+            toMessageDocument(message as ChatMessage),
+          );
+          const requestTimestamp = claimedJob.createdAt.toISOString();
+          const toolRunResult = await generateSequentialToolMessages(request, (message) => {
+            enqueueEvent("tool", message).catch(() => undefined);
+          });
+
           if (toolRunResult.skippedAll) {
-            enqueueEvent({
-              type: "tool",
-              message: createChatMessage(
+            await enqueueEvent(
+              "tool",
+              createChatMessage(
                 "tool",
                 "분석 스킵됨\n선택한 도구 변경이 없어 기존 분석을 그대로 사용합니다.",
               ),
-            });
+            );
           }
 
           const prompt = buildLumoChatPrompt({
-            ...body,
+            ...request,
             requestTimestamp,
             messages: [
               ...toolRunResult.promptMessages.map(({ message }) => toMessageDocument(message)),
@@ -748,7 +1021,7 @@ export async function POST(request: Request) {
 
             if (delta) {
               assistantText += delta;
-              enqueueEvent({ type: "chunk", delta });
+              await enqueueEvent("chunk", { delta });
             }
 
             await readNextChunk();
@@ -761,7 +1034,7 @@ export async function POST(request: Request) {
           }
 
           const persistedConversation = await persistConversation(
-            body,
+            request,
             [
               ...sanitizedMessages,
               ...toolRunResult.streamedMessages.map(({ message }) =>
@@ -770,44 +1043,49 @@ export async function POST(request: Request) {
             ],
             assistantText,
             userId,
-            userName,
-            userImage,
+            conversationId,
           );
 
-          enqueueEvent({
-            type: "done",
-            conversation: persistedConversation.conversation,
-          });
+          await jobs.updateOne(
+            {
+              _id: claimedJob._id,
+              userId,
+            },
+            {
+              $set: {
+                status: "completed",
+                completedAt: new Date(),
+              },
+              $unset: {
+                error: "",
+              },
+            },
+          );
+
+          await enqueueEvent("done", persistedConversation.conversation);
         } catch (error) {
           const message =
             error instanceof Error ? error.message : "루모 AI 채팅 생성에 실패했습니다.";
-          enqueueEvent({ type: "error", error: message });
+
+          await jobs.updateOne(
+            {
+              _id: claimedJob._id,
+              userId,
+            },
+            {
+              $set: {
+                status: "failed",
+                failedAt: new Date(),
+                error: message,
+              },
+            },
+          );
+
+          await enqueueEvent("failure", { error: message });
         } finally {
           controller.close();
         }
       },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "application/x-ndjson; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (error) {
-    if (error instanceof LumoRouteError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "루모 AI 채팅 생성 중 알 수 없는 오류가 발생했습니다.",
-      },
-      { status: 500 },
-    );
-  }
+    }),
+  );
 }

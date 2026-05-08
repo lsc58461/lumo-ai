@@ -45,6 +45,7 @@ export default async function Home({ searchParams }: HomePageProps) {
   return (
     <HomeShell
       featuredPrompts={featuredPrompts}
+      initialConversation={null}
       initialConversationPreviews={conversationPreviews}
       initialProfiles={initialProfiles}
       initialActiveProfileIds={initialActiveProfileIds}
